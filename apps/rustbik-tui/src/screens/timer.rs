@@ -1,5 +1,5 @@
-//! Timer screen functionality.
-//! Handles Rubik's cube timing, scrambling, and visualization.
+//! Timer screen functionality
+//! Handles Rubik's cube timing, scrambling, and visualization
 
 use crate::screens::{Screen, ScreenAction, main_menu::MainMenuScreen};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
@@ -18,7 +18,7 @@ const COLOR_HOLDING: Color = Color::Rgb(241, 196, 15);
 const COLOR_READY: Color = Color::Rgb(46, 204, 113);
 const COLOR_IDLE: Color = Color::Rgb(236, 240, 241);
 
-/// Helper struct for timer formatting and UI utility calculations.
+/// Helper struct for timer formatting and UI utility calculations
 struct TimerUtils;
 
 impl TimerUtils {
@@ -51,7 +51,7 @@ impl TimerUtils {
     }
 }
 
-/// The main timer screen displaying the cube state and timing interface.
+/// The main timer screen displaying the cube state and timing interface
 pub struct TimerScreen {
     start_hold_time: Option<Instant>,
     running_since: Option<Instant>,
@@ -101,7 +101,6 @@ impl TimerScreen {
         COLOR_IDLE
     }
 
-    /// Renders the timer display (big text) to the frame.
     /// Renders the timer display (big text) to the frame.
     fn draw_timer_display(
         &self,
@@ -154,7 +153,6 @@ impl TimerScreen {
         }
     }
 
-    /// Renders the 2D representation of the cube net.
     /// Renders the 2D representation of the cube net.
     fn draw_cube_net(&self, frame: &mut Frame, area: Rect) {
         // Retrieve the cube net structure as a flat string and prepare lines for rendering

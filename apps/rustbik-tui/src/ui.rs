@@ -1,5 +1,5 @@
-//! TUI application entry point and main event loop.
-//! This module manages the terminal state, event handling, and screen transitions.
+//! TUI application entry point and main event loop
+//! This module manages the terminal state, event handling, and screen transitions
 
 use crossterm::{
     ExecutableCommand,
@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use crate::screens::{Screen, ScreenAction, main_menu::MainMenuScreen};
 
-/// Represents the state of the TUI application.
+/// Represents the state of the TUI application
 struct TuiApp {
     /// The currently active screen being rendered and handled.
     current_screen: Box<dyn Screen>,
@@ -28,8 +28,7 @@ impl TuiApp {
     }
 }
 
-/// Runs the main event loop for the application.
-/// It sets up the terminal, processes keyboard events, and manages screen switching.
+/// It sets up the terminal, processes keyboard events, and manages screen switching
 pub fn ui_loop() -> Result<()> {
     let mut stdout = stdout();
     stdout.execute(EnterAlternateScreen)?;

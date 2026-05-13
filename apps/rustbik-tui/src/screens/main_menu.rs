@@ -1,5 +1,5 @@
-//! Main menu screen functionality.
-//! Displays the main menu for the application.
+//! Main menu screen functionality
+//! Displays the main menu for the application
 
 use crate::screens::{Screen, ScreenAction, timer::TimerScreen};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
@@ -12,7 +12,7 @@ use ratatui::{
 const HIGHLIGHT_COLOR: Color = Color::Rgb(52, 152, 219); // Peter River Blue
 const TEXT_COLOR: Color = Color::Rgb(236, 240, 241); // Cloud White
 
-/// The main menu screen.
+/// The main menu screen
 pub struct MainMenuScreen {
     items: Vec<String>,
     state: ListState,

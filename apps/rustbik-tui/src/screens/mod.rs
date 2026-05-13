@@ -1,10 +1,10 @@
-//! Screen management module.
-//! Defines the traits and actions for managing different UI screens in the application.
+//! Screen management module
+//! Defines the traits and actions for managing different UI screens in the application
 
 use crossterm::event::KeyEvent;
 use ratatui::Frame;
 
-/// Represents actions a screen can request the application to take.
+/// Represents actions a screen can request the application to take
 pub enum ScreenAction {
     /// No action to take.
     None,
@@ -14,7 +14,7 @@ pub enum ScreenAction {
     Quit,
 }
 
-/// A trait defining the requirements for a screen in the TUI application.
+/// A trait defining the requirements for a screen in the TUI application
 pub trait Screen {
     /// Draws the screen content on the terminal frame.
     fn draw(&mut self, frame: &mut Frame);

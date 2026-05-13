@@ -1,7 +1,7 @@
 use rand::prelude::*;
 use std::fmt;
 
-/// Represents the face or axis around which a move is performed.
+/// Represents the face or axis around which a move is performed
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MoveAxis {
     U, // Up
@@ -12,7 +12,7 @@ pub(crate) enum MoveAxis {
     D, // Down
 }
 
-/// Represents the direction and count of a single move.
+/// Represents the direction and count of a single move
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MoveDirection {
     Clk, // Clockwise
@@ -20,7 +20,7 @@ pub(crate) enum MoveDirection {
     Dbl, // Double move (180 degrees)
 }
 
-/// A single atomic move in a sequence.
+/// A single atomic move in a sequence
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct SingleMove {
     pub(crate) axis: MoveAxis,
