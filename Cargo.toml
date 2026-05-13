@@ -1,0 +1,8 @@
+[workspace]
+
+members = [
+    "libs/rustbik-cube",
+    "apps/rustbik-tui",
+]
+
+resolver = "2"
