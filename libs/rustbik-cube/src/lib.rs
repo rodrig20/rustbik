@@ -118,6 +118,14 @@ impl PyCube {
     fn net_map(&self) -> String {
         self.inner.net_map()
     }
+
+    fn edges(&self) -> u64 {
+        self.inner.edges()
+    }
+
+    fn corners(&self) -> u64 {
+        self.inner.corners()
+    }
 }
 
 #[pyfunction]

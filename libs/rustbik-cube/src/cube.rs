@@ -51,6 +51,17 @@ impl Cube {
             corners: Self::CORNERS_SOLVED,
         }
     }
+
+    #[inline(always)]
+    pub fn edges(&self) -> u64 {
+        self.edges
+    }
+
+    #[inline(always)]
+    pub fn corners(&self) -> u64 {
+        self.corners
+    }
+
     /// Creates a new Cube in a random state
     pub fn new_random(size: usize) -> Self {
         let mut cube = Self {

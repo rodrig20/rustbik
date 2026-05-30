@@ -48,7 +48,7 @@ impl KociembaCube {
         // 12th edge orientation is determined by parity (sum is always even)
         // We only need 11 bits to uniquely represent EO
         for i in 0..11 {
-            let ori = (self.0.edges >> (i * 5 + 4)) & 0b1;
+            let ori = (self.edges() >> (i * 5 + 4)) & 0b1;
             coord |= (ori as u16) << i;
         }
         coord
@@ -63,10 +63,10 @@ impl KociembaCube {
         // (Factorial Number System)
         for i in (1..12).rev() {
             let mut sum: u32 = 0;
-            let i_edge_id = ((self.0.edges >> (i * 5)) & 0b1111) as u32;
+            let i_edge_id = ((self.edges() >> (i * 5)) & 0b1111) as u32;
 
             for j in (0..i).rev() {
-                let j_edge_id = ((self.0.edges >> (j * 5)) & 0b1111) as u32;
+                let j_edge_id = ((self.edges() >> (j * 5)) & 0b1111) as u32;
                 if j_edge_id > i_edge_id {
                     sum += 1;
                 }
@@ -83,7 +83,7 @@ impl KociembaCube {
 
         // Collect only the 8 edges not in the UDS slice
         for i in 0..12 {
-            let id = ((self.0.edges >> (i * 5)) & 0x0F) as u8;
+            let id = ((self.edges() >> (i * 5)) & 0x0F) as u8;
             if id < 8 {
                 perm[count] = id;
                 count += 1;
@@ -110,7 +110,7 @@ impl KociembaCube {
 
         // Collect only the 4 slice edges and normalize (8-11 -> 0-3)
         for i in 0..12 {
-            let id = ((self.0.edges >> (i * 5)) & 0x0F) as u8;
+            let id = ((self.edges() >> (i * 5)) & 0x0F) as u8;
             if id >= 8 {
                 perm[count] = id - 8;
                 count += 1;
@@ -137,7 +137,7 @@ impl KociembaCube {
 
         // Identify positions of the 4 slice edges in the cube
         for i in 0..12 {
-            let edge_val = (self.0.edges >> (i * 5)) & 0x0F;
+            let edge_val = (self.edges() >> (i * 5)) & 0x0F;
             if slice_ids.contains(&(edge_val as usize)) {
                 occupied[i] = true;
             }
@@ -164,7 +164,7 @@ impl KociembaCube {
         // 8th corner orientation is determined by the sum of orientations modulo 3
         for i in 0..7 {
             // Extract orientation (bits 3-4) and calculate base-3 representation
-            let ori = (self.0.corners >> (i * 5 + 3)) & 0b11;
+            let ori = (self.corners() >> (i * 5 + 3)) & 0b11;
             coord += ori as u16 * multiplier;
             multiplier *= 3;
         }
@@ -178,10 +178,10 @@ impl KociembaCube {
         // Rank the corner permutation using Lehmer code on 8 pieces
         for i in (1..8).rev() {
             let mut sum: u16 = 0;
-            let i_corner_id = ((self.0.corners >> (i * 5)) & 0b111) as u16;
+            let i_corner_id = ((self.corners() >> (i * 5)) & 0b111) as u16;
 
             for j in (0..i).rev() {
-                let j_corner_id = ((self.0.corners >> (j * 5)) & 0b111) as u16;
+                let j_corner_id = ((self.corners() >> (j * 5)) & 0b111) as u16;
                 if j_corner_id > i_corner_id {
                     sum += 1;
                 }
