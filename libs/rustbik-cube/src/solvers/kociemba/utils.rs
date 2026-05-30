@@ -270,4 +270,14 @@ mod tests {
         assert_eq!(cube.get_co_coord(), 0);
         assert_eq!(cube.get_cp_coord(), 0);
     }
+
+    #[test]
+    fn test_coordinates_after_move() {
+        let mut cube = KociembaCube::new();
+        cube.turn(&SingleMove::new("R").unwrap());
+        // An R move does NOT change edge orientation (EO should remain 0)
+        assert_eq!(cube.get_eo_coord(), 0);
+        // But it DOES change corner orientation
+        assert!(cube.get_co_coord() != 0);
+    }
 }

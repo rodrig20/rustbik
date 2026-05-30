@@ -64,3 +64,35 @@ fn test_pll_sequence() {
 
     assert!(cube.is_solved(), "Cube should be solved after PLL sequence");
 }
+
+/// Verifies that saving and reloading the cube state maintains consistency
+#[test]
+fn test_state_persistence_integration() {
+    let mut cube = Cube::new();
+    cube.apply(&Scramble::new("R U R' U'")); // Apply a move
+
+    let state = cube.minimal_representation();
+
+    let cube2 = Cube::new_from_minimal(state);
+    assert_eq!(cube.net_map(), cube2.net_map()); // Ensure visual representation matches
+}
+
+/// Verifies that random scrambles always result in a valid cube state with correct color distribution
+#[test]
+fn test_random_scramble_integrity() {
+    for _ in 0..100 {
+        let cube = Cube::new_random(20);
+        let net = cube.net_map();
+        assert_eq!(net.len(), 54);
+
+        // Verify exactly 9 of each color
+        for color in &['W', 'G', 'R', 'B', 'O', 'Y'] {
+            let count = net.chars().filter(|&c| c == *color).count();
+            assert_eq!(
+                count, 9,
+                "Color {} count should be 9, found {}",
+                color, count
+            );
+        }
+    }
+}

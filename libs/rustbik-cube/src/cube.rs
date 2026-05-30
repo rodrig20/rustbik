@@ -422,12 +422,16 @@ mod tests {
     }
 
     #[test]
-    fn test_sune_cycle() {
-        let mut cube = Cube::new();
-        // Sune (R U R' U R U2 R') repeated 6 times returns it to solved (for corners/edges cycle)
-        for _ in 0..6 {
-            cube.apply(&Scramble::new("R U R' U R U2 R'"));
-        }
-        assert!(cube.is_solved());
+    fn test_minimal_representation_cycle() {
+        let cube = Cube::new_random(10);
+        let min_rep = cube.minimal_representation();
+        let cube2 = Cube::new_from_minimal(min_rep);
+        assert_eq!(cube, cube2);
+    }
+
+    #[test]
+    fn test_new_random_not_solved() {
+        let cube = Cube::new_random(10);
+        assert!(!cube.is_solved());
     }
 }

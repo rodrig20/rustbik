@@ -278,10 +278,10 @@ impl Scramble {
                 }
             }
 
-            // Optimization 2: Avoid redundant sequences in the same axis group.
-            // For example, "U D U" is redundant because U and D commute.
+            // Optimization 2: Avoid redundant sequences in the same axis group
+            // For example, "U D U" is redundant because U and D commute
             // If the last two moves were 'a' and 'b', and 'a' has the same axis as 'new_move'
-            // while 'b' is in the same axis group (opposite face), the sequence is redundant.
+            // while 'b' is in the same axis group (opposite face), the sequence is redundant
             if list.len() >= 2 {
                 let a = list[list.len() - 2];
                 let b = list[list.len() - 1];

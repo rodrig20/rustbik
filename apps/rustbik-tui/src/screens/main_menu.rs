@@ -19,18 +19,15 @@ pub struct MainMenuScreen {
 }
 
 impl MainMenuScreen {
-    /// Creates a new `MainMenuScreen` with default menu items.
+    /// Creates a new `MainMenuScreen` with default menu items
     pub fn new() -> Self {
-        let items = vec![
-            "Timer".to_string(),
-            "Quit (q)".to_string(),
-        ];
+        let items = vec!["Timer".to_string(), "Quit (q)".to_string()];
         let mut state = ListState::default();
         state.select(Some(0));
         Self { items, state }
     }
 
-    /// Moves the selection to the next item in the list.
+    /// Moves the selection to the next item in the list
     fn next(&mut self) {
         let i = match self.state.selected() {
             Some(i) => (i + 1) % self.items.len(),
@@ -39,7 +36,7 @@ impl MainMenuScreen {
         self.state.select(Some(i));
     }
 
-    /// Moves the selection to the previous item in the list.
+    /// Moves the selection to the previous item in the list
     fn previous(&mut self) {
         let i = match self.state.selected() {
             Some(i) => (i + self.items.len() - 1) % self.items.len(),

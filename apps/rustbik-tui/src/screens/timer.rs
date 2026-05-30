@@ -22,7 +22,7 @@ const COLOR_IDLE: Color = Color::Rgb(236, 240, 241);
 struct TimerUtils;
 
 impl TimerUtils {
-    /// Splits a duration into main (minutes:seconds) and fractional (cents) parts.
+    /// Splits a duration into main (minutes:seconds) and fractional (cents) parts
     fn split_duration(duration: Duration, precision: usize) -> (String, String) {
         let total_secs = duration.as_secs();
         let minutes = total_secs / 60;
@@ -40,12 +40,12 @@ impl TimerUtils {
         (main, cents)
     }
 
-    /// Checks if the timer display can fit within the current screen area.
+    /// Checks if the timer display can fit within the current screen area
     fn can_fit_full_size(area: Rect, text_len: usize) -> bool {
         area.height >= 12 && area.width >= (text_len as u16 * 8) && area.width >= 50
     }
 
-    /// Estimates the width of a text string in pixels based on character count.
+    /// Estimates the width of a text string in pixels based on character count
     fn estimate_text_width(text: &str) -> u16 {
         (text.len() as u16) * 8
     }
@@ -62,7 +62,7 @@ pub struct TimerScreen {
 }
 
 impl TimerScreen {
-    /// Creates a new `TimerScreen` with a fresh scramble.
+    /// Creates a new `TimerScreen` with a fresh scramble
     pub fn new() -> Self {
         let scramble = Scramble::random(25);
         let scramble_str = scramble.to_string();
@@ -76,7 +76,7 @@ impl TimerScreen {
         }
     }
 
-    /// Returns the elapsed duration if running, or the last completed time.
+    /// Returns the elapsed duration if running, or the last completed time
     fn get_current_duration(&self) -> Duration {
         if self.is_running {
             self.running_since
@@ -87,7 +87,7 @@ impl TimerScreen {
         }
     }
 
-    /// Determines the current display color based on timer state.
+    /// Determines the current display color based on timer state
     fn get_timer_color(&self) -> Color {
         if !self.is_running {
             if let Some(start) = self.start_hold_time {
@@ -101,7 +101,7 @@ impl TimerScreen {
         COLOR_IDLE
     }
 
-    /// Renders the timer display (big text) to the frame.
+    /// Renders the timer display (big text) to the frame
     fn draw_timer_display(
         &self,
         frame: &mut Frame,
@@ -153,7 +153,7 @@ impl TimerScreen {
         }
     }
 
-    /// Renders the 2D representation of the cube net.
+    /// Renders the 2D representation of the cube net
     fn draw_cube_net(&self, frame: &mut Frame, area: Rect) {
         // Retrieve the cube net structure as a flat string and prepare lines for rendering
         let raw = self.cube.net_map();

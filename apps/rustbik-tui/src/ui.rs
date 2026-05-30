@@ -16,7 +16,7 @@ use crate::screens::{Screen, ScreenAction, main_menu::MainMenuScreen};
 
 /// Represents the state of the TUI application
 struct TuiApp {
-    /// The currently active screen being rendered and handled.
+    /// The currently active screen being rendered and handled
     current_screen: Box<dyn Screen>,
 }
 
