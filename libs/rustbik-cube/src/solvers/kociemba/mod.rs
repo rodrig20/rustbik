@@ -17,7 +17,7 @@ mod tests {
     #[test]
     fn test_kociemba_api_integration() {
         let cube = KociembaCube(Cube::new());
-        // Garante que a API de coordenadas está acessível e correta para um usuário
+        // Ensure the coordinate API is accessible and correct for a user
         assert_eq!(cube.get_eo_coord(), 0);
     }
 }
