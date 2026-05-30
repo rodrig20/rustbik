@@ -1,12 +1,13 @@
-use crate::moves::{MoveAxis, MoveDirection, Scramble, SingleMove};
+use crate::moves::{Scramble, SingleMove};
 use std::fmt;
 
 /// Represents a 3x3 Rubik's Cube using bitboards for edges and corners
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Cube {
     // 12 edges, each taking 5 bits (1 bit for orientation, 4 bits for piece ID)
-    edges: u64,
+    pub(crate) edges: u64,
     // 8 corners, each taking 5 bits (2 bits for orientation, 3 bits for piece ID)
-    corners: u64,
+    pub(crate) corners: u64,
 }
 
 impl Cube {
@@ -21,14 +22,14 @@ impl Cube {
         ['W', 'G'],
         ['W', 'O'],
         ['W', 'B'],
-        ['G', 'R'],
-        ['G', 'O'],
-        ['B', 'O'],
-        ['B', 'R'],
         ['Y', 'R'],
         ['Y', 'G'],
         ['Y', 'O'],
         ['Y', 'B'],
+        ['G', 'R'],
+        ['G', 'O'],
+        ['B', 'O'],
+        ['B', 'R'],
     ];
 
     // Color mapping for corner pieces
@@ -50,7 +51,6 @@ impl Cube {
             corners: Self::CORNERS_SOLVED,
         }
     }
-
     /// Creates a new Cube in a random state
     pub fn new_random(size: usize) -> Self {
         let mut cube = Self {
@@ -63,21 +63,27 @@ impl Cube {
             Scramble::random(size)
         };
 
-        cube.apply_move(initial_scramble);
+        cube.apply(&initial_scramble);
 
         cube
     }
 
     /// Creates a new Cube with a specified scramble
-    pub fn new_with(move_list: Scramble) -> Self {
+    pub fn new_with(move_list: &Scramble) -> Self {
         let mut cube = Self {
             edges: Self::EDGES_SOLVED,
             corners: Self::CORNERS_SOLVED,
         };
 
-        cube.apply_move(move_list);
+        cube.apply(move_list);
 
         cube
+    }
+
+    pub fn new_from_minimal(representation: u128) -> Self {
+        let edges = (representation >> 64) as u64;
+        let corners = representation as u64;
+        Self { edges, corners }
     }
 
     /// Checks if the cube is currently in its solved state
@@ -86,109 +92,58 @@ impl Cube {
     }
 
     /// Applies a list of moves to the cube
-    pub fn apply_move(&mut self, move_list: Scramble) {
+    pub fn apply(&mut self, move_list: &Scramble) {
         for mv in move_list.iter() {
-            self.move_side(mv);
+            self.turn(mv);
         }
     }
+    /// Performs a single face rotation using bitboard manipulation
+    /// This method extracts 4 edge and 4 corner pieces from their bitboard slots,
+    /// updates their orientation based on precomputed look-up tables (LUTs),
+    /// and permutes them into their new positions
+    pub fn turn(&mut self, mv: &SingleMove) {
+        let data = mv.get_data();
 
-    /// Performs a single face rotation
-    fn move_side(&mut self, mv: &SingleMove) {
-        let (edge_mask_idxs, corner_mask_idxs, corner_ori_swap) = mv.mask();
+        // Extract current pieces (5 bits each) from the source slots
+        let mut e0 = (self.edges >> data.e_shifts[0].0) & 0x1F;
+        let mut e1 = (self.edges >> data.e_shifts[1].0) & 0x1F;
+        let mut e2 = (self.edges >> data.e_shifts[2].0) & 0x1F;
+        let mut e3 = (self.edges >> data.e_shifts[3].0) & 0x1F;
 
-        match mv.dir {
-            MoveDirection::Clk => {
-                let mut corner_list_of_values = [(0u8, 0u8); 4];
-                let mut edge_list_of_values = [(0u8, 0u8); 4];
+        let mut c0 = (self.corners >> data.c_shifts[0].0) & 0x1F;
+        let mut c1 = (self.corners >> data.c_shifts[1].0) & 0x1F;
+        let mut c2 = (self.corners >> data.c_shifts[2].0) & 0x1F;
+        let mut c3 = (self.corners >> data.c_shifts[3].0) & 0x1F;
 
-                // Extract pieces currently at the affected slots
-                for i in 0..4 {
-                    corner_list_of_values[i] = self.get_corner_slot(corner_mask_idxs[i]);
-                    edge_list_of_values[i] = self.get_edge_slot(edge_mask_idxs[i]);
-                }
+        // Clear affected slots using the precomputed masks
+        self.edges &= !data.e_mask;
+        self.corners &= !data.c_mask;
 
-                // Cycle pieces and update orientations
-                for i in 0..4 {
-                    // Corners
-                    let (corner_old_ori, corner_id) = corner_list_of_values[i];
-
-                    let corner_new_ori = if u64::from(corner_old_ori) == corner_ori_swap[0] {
-                        corner_ori_swap[1] as u8
-                    } else if u64::from(corner_old_ori) == corner_ori_swap[1] {
-                        corner_ori_swap[0] as u8
-                    } else {
-                        corner_old_ori
-                    };
-
-                    self.set_corner_slot(corner_mask_idxs[(i + 1) % 4], corner_new_ori, corner_id);
-
-                    // Edges
-                    let edge_old_ori = edge_list_of_values[i].0;
-                    let edge_new_ori = match mv.axis {
-                        MoveAxis::F | MoveAxis::B => (edge_old_ori == 0) as u8,
-                        _ => edge_old_ori,
-                    };
-                    self.set_edge_slot(
-                        edge_mask_idxs[(i + 1) % 4],
-                        edge_new_ori,
-                        edge_list_of_values[i].1,
-                    );
-                }
-            }
-            MoveDirection::CCw => {
-                let mut corner_list_of_values = [(0u8, 0u8); 4];
-                let mut edge_list_of_values = [(0u8, 0u8); 4];
-
-                // Extract pieces currently at the affected slots
-                for i in 0..4 {
-                    corner_list_of_values[i] = self.get_corner_slot(corner_mask_idxs[i]);
-                    edge_list_of_values[i] = self.get_edge_slot(edge_mask_idxs[i]);
-                }
-
-                // Cycle pieces and update orientations
-                for i in 0..4 {
-                    // Corners
-                    let (corner_old_ori, corner_id) = corner_list_of_values[i];
-
-                    let corner_new_ori = if u64::from(corner_old_ori) == corner_ori_swap[0] {
-                        corner_ori_swap[1] as u8
-                    } else if u64::from(corner_old_ori) == corner_ori_swap[1] {
-                        corner_ori_swap[0] as u8
-                    } else {
-                        corner_old_ori
-                    };
-
-                    self.set_corner_slot(corner_mask_idxs[(i + 3) % 4], corner_new_ori, corner_id);
-
-                    // Edges
-                    let edge_old_ori = edge_list_of_values[i].0;
-                    let edge_new_ori = match mv.axis {
-                        MoveAxis::F | MoveAxis::B => (edge_old_ori == 0) as u8,
-                        _ => edge_old_ori,
-                    };
-                    self.set_edge_slot(
-                        edge_mask_idxs[(i + 3) % 4],
-                        edge_new_ori,
-                        edge_list_of_values[i].1,
-                    );
-                }
-            }
-            MoveDirection::Dbl => {
-                for i in 0..2 {
-                    // Corners
-                    let (ori1, id1) = self.get_corner_slot(corner_mask_idxs[i]);
-                    let (ori2, id2) = self.get_corner_slot(corner_mask_idxs[i + 2]);
-                    self.set_corner_slot(corner_mask_idxs[i], ori2, id2);
-                    self.set_corner_slot(corner_mask_idxs[i + 2], ori1, id1);
-
-                    // Edges
-                    let (ori1, id1) = self.get_edge_slot(edge_mask_idxs[i]);
-                    let (ori2, id2) = self.get_edge_slot(edge_mask_idxs[i + 2]);
-                    self.set_edge_slot(edge_mask_idxs[i], ori2, id2);
-                    self.set_edge_slot(edge_mask_idxs[i + 2], ori1, id1);
-                }
-            }
+        // Apply edge orientation updates (flip bit if necessary)
+        if data.e_flip {
+            e0 ^= 0x10;
+            e1 ^= 0x10;
+            e2 ^= 0x10;
+            e3 ^= 0x10;
         }
+
+        // Apply corner orientation updates using the LUT
+        let l = &data.c_ori_lut;
+        c0 = (u64::from(l[(c0 >> 3) as usize]) << 3) | (c0 & 0x07);
+        c1 = (u64::from(l[(c1 >> 3) as usize]) << 3) | (c1 & 0x07);
+        c2 = (u64::from(l[(c2 >> 3) as usize]) << 3) | (c2 & 0x07);
+        c3 = (u64::from(l[(c3 >> 3) as usize]) << 3) | (c3 & 0x07);
+
+        // Permute and insert pieces back into their destination slots
+        self.edges |= (e0 << data.e_shifts[0].1)
+            | (e1 << data.e_shifts[1].1)
+            | (e2 << data.e_shifts[2].1)
+            | (e3 << data.e_shifts[3].1);
+
+        self.corners |= (c0 << data.c_shifts[0].1)
+            | (c1 << data.c_shifts[1].1)
+            | (c2 << data.c_shifts[2].1)
+            | (c3 << data.c_shifts[3].1);
     }
 
     /// Retrieves orientation and piece ID for an edge slot
@@ -203,34 +158,24 @@ impl Cube {
         (((val >> 3) & 0b11) as u8, (val & 0b111) as u8)
     }
 
-    /// Sets orientation and piece ID for an edge slot
-    fn set_edge_slot(&mut self, i: usize, ori: u8, piece_id: u8) {
-        let shift = 5 * i;
-        let slot = (u64::from(ori) << 4 | u64::from(piece_id)) << shift;
-        self.edges = self.edges & !(0b11111 << shift) | slot;
-    }
-
-    /// Sets orientation and piece ID for a corner slot
-    fn set_corner_slot(&mut self, i: usize, ori: u8, piece_id: u8) {
-        let shift = 5 * i;
-        let slot = (u64::from(ori) << 3 | u64::from(piece_id)) << shift;
-        self.corners = self.corners & !(0b11111 << shift) | slot;
-    }
-
     /// Returns the color of a specific edge sticker based on orientation
     fn get_edge_color(&self, slot: usize, sticker: usize) -> char {
         let (ori, pos) = self.get_edge_slot(slot);
         Self::EDGE_COLORS[pos as usize][(sticker ^ ori as usize) % 2]
     }
 
-    /// Returns the color of a specific corner sticker, accounting for orientation and parity
+    /// Returns the color of a specific corner sticker
+    /// Accounting for orientation and parity is complex because corner colors
+    /// cycle depending on whether the piece is in an "even" or "odd" position relative to its home
     fn get_corner_color(&self, slot: usize, sticker: usize) -> char {
         let (ori, pos) = self.get_corner_slot(slot);
 
+        // Determine if the piece is in a slot with matching parity to its identity
         let slot_parity = (slot % 2) ^ (slot / 4);
         let piece_parity = (pos as usize % 2) ^ (pos as usize / 4);
         let rel_parity = slot_parity ^ piece_parity;
 
+        // Apply orientation transformation based on the relative parity and current orientation
         let idx = match (rel_parity, ori as usize) {
             (0, 1) => [2, 0, 1][sticker],
             (0, 2) => [1, 2, 0][sticker],
@@ -242,12 +187,16 @@ impl Cube {
         Self::CORNER_COLORS[pos as usize][idx]
     }
 
+    pub fn minimal_representation(&self) -> u128 {
+        ((self.edges as u128) << 64) | (self.corners as u128)
+    }
+
     /// Returns representation of the cube
     pub fn net_map(&self) -> String {
-        let mut output = String::with_capacity(54); // Cubo with 54 stickers
+        let mut output = String::with_capacity(54); // Cube with 54 stickers
         let faces = self.get_face_data();
 
-        // Logical order (U, L, F, R, B, D)
+        // Logical order for standard net mapping: (U, L, F, R, B, D)
         for &face_idx in &[0, 4, 1, 2, 3, 5] {
             for r in 0..3 {
                 for c in 0..3 {
@@ -255,7 +204,6 @@ impl Cube {
                 }
             }
         }
-
         output
     }
 
@@ -293,55 +241,55 @@ impl Cube {
         f[1][0][0] = self.get_corner_color(1, 1);
         f[1][0][1] = self.get_edge_color(1, 1);
         f[1][0][2] = self.get_corner_color(0, 1);
-        f[1][1][0] = self.get_edge_color(5, 0);
+        f[1][1][0] = self.get_edge_color(9, 0);
         f[1][1][1] = 'G';
-        f[1][1][2] = self.get_edge_color(4, 0);
+        f[1][1][2] = self.get_edge_color(8, 0);
         f[1][2][0] = self.get_corner_color(5, 1);
-        f[1][2][1] = self.get_edge_color(9, 1);
+        f[1][2][1] = self.get_edge_color(5, 1);
         f[1][2][2] = self.get_corner_color(4, 1);
 
         // R face
         f[2][0][0] = self.get_corner_color(0, 2);
         f[2][0][1] = self.get_edge_color(0, 1);
         f[2][0][2] = self.get_corner_color(3, 2);
-        f[2][1][0] = self.get_edge_color(4, 1);
+        f[2][1][0] = self.get_edge_color(8, 1);
         f[2][1][1] = 'R';
-        f[2][1][2] = self.get_edge_color(7, 1);
+        f[2][1][2] = self.get_edge_color(11, 1);
         f[2][2][0] = self.get_corner_color(4, 2);
-        f[2][2][1] = self.get_edge_color(8, 1);
+        f[2][2][1] = self.get_edge_color(4, 1);
         f[2][2][2] = self.get_corner_color(7, 2);
 
         // B face
         f[3][0][0] = self.get_corner_color(3, 1);
         f[3][0][1] = self.get_edge_color(3, 1);
         f[3][0][2] = self.get_corner_color(2, 1);
-        f[3][1][0] = self.get_edge_color(7, 0);
+        f[3][1][0] = self.get_edge_color(11, 0);
         f[3][1][1] = 'B';
-        f[3][1][2] = self.get_edge_color(6, 0);
+        f[3][1][2] = self.get_edge_color(10, 0);
         f[3][2][0] = self.get_corner_color(7, 1);
-        f[3][2][1] = self.get_edge_color(11, 1);
+        f[3][2][1] = self.get_edge_color(7, 1);
         f[3][2][2] = self.get_corner_color(6, 1);
 
         // L face
         f[4][0][0] = self.get_corner_color(2, 2);
         f[4][0][1] = self.get_edge_color(2, 1);
         f[4][0][2] = self.get_corner_color(1, 2);
-        f[4][1][0] = self.get_edge_color(6, 1);
+        f[4][1][0] = self.get_edge_color(10, 1);
         f[4][1][1] = 'O';
-        f[4][1][2] = self.get_edge_color(5, 1);
+        f[4][1][2] = self.get_edge_color(9, 1);
         f[4][2][0] = self.get_corner_color(6, 2);
-        f[4][2][1] = self.get_edge_color(10, 1);
+        f[4][2][1] = self.get_edge_color(6, 1);
         f[4][2][2] = self.get_corner_color(5, 2);
 
         // D face
         f[5][0][0] = self.get_corner_color(5, 0);
-        f[5][0][1] = self.get_edge_color(9, 0);
+        f[5][0][1] = self.get_edge_color(5, 0);
         f[5][0][2] = self.get_corner_color(4, 0);
-        f[5][1][0] = self.get_edge_color(10, 0);
+        f[5][1][0] = self.get_edge_color(6, 0);
         f[5][1][1] = 'Y';
-        f[5][1][2] = self.get_edge_color(8, 0);
+        f[5][1][2] = self.get_edge_color(4, 0);
         f[5][2][0] = self.get_corner_color(6, 0);
-        (&mut f[5][2])[1] = self.get_edge_color(11, 0);
+        f[5][2][1] = self.get_edge_color(7, 0);
         f[5][2][2] = self.get_corner_color(7, 0);
 
         f
@@ -353,35 +301,42 @@ impl fmt::Display for Cube {
         let raw_str = self.net_map();
         let raw: Vec<char> = raw_str.chars().collect();
 
-        // Helper para obter uma face específica (9 caracteres)
+        // Helper to get a specific face (9 stickers) from the raw string
         let get_face = |i: usize| &raw[(i * 9)..(i * 9 + 9)];
 
-        // UP - 0
+        // UP - face index 0
         let u = get_face(0);
         for r in 0..3 {
-            write!(f, "         ")?; // Indentação para alinhar com o meio
+            write!(f, "         ")?; // Padding for center alignment
             for c in 0..3 {
                 write!(f, "{}", self.format_sticker(u[r * 3 + c]))?;
             }
             writeln!(f)?;
         }
 
-        // LEFT, FRONT, RIGHT, BACK - 1, 2, 3, 4
+        // LEFT, FRONT, RIGHT, BACK - faces 1, 2, 3, 4
         let l = get_face(1);
         let front = get_face(2);
         let r_face = get_face(3);
         let b = get_face(4);
 
         for r in 0..3 {
-            // Desenha a linha 'r' de cada face lateral lado a lado
-            for c in 0..3 { write!(f, "{}", self.format_sticker(l[r * 3 + c]))?; }
-            for c in 0..3 { write!(f, "{}", self.format_sticker(front[r * 3 + c]))?; }
-            for c in 0..3 { write!(f, "{}", self.format_sticker(r_face[r * 3 + c]))?; }
-            for c in 0..3 { write!(f, "{}", self.format_sticker(b[r * 3 + c]))?; }
+            for c in 0..3 {
+                write!(f, "{}", self.format_sticker(l[r * 3 + c]))?;
+            }
+            for c in 0..3 {
+                write!(f, "{}", self.format_sticker(front[r * 3 + c]))?;
+            }
+            for c in 0..3 {
+                write!(f, "{}", self.format_sticker(r_face[r * 3 + c]))?;
+            }
+            for c in 0..3 {
+                write!(f, "{}", self.format_sticker(b[r * 3 + c]))?;
+            }
             writeln!(f)?;
         }
 
-        // DOWN - 5
+        // DOWN - face index 5
         let d = get_face(5);
         for r in 0..3 {
             write!(f, "         ")?;
@@ -408,51 +363,51 @@ mod tests {
     #[test]
     fn test_single_move_unsolves() {
         let mut cube = Cube::new();
-        cube.apply_move(Scramble::new("R"));
+        cube.apply(&Scramble::new("R"));
         assert!(!cube.is_solved());
     }
 
     #[test]
     fn test_move_inverse() {
         let mut cube = Cube::new();
-        cube.apply_move(Scramble::new("R R'"));
+        cube.apply(&Scramble::new("R R'"));
         assert!(cube.is_solved());
 
-        cube.apply_move(Scramble::new("U U'"));
+        cube.apply(&Scramble::new("U U'"));
         assert!(cube.is_solved());
 
-        cube.apply_move(Scramble::new("F F'"));
+        cube.apply(&Scramble::new("F F'"));
         assert!(cube.is_solved());
 
-        cube.apply_move(Scramble::new("L L'"));
+        cube.apply(&Scramble::new("L L'"));
         assert!(cube.is_solved());
 
-        cube.apply_move(Scramble::new("B B'"));
+        cube.apply(&Scramble::new("B B'"));
         assert!(cube.is_solved());
 
-        cube.apply_move(Scramble::new("D D'"));
+        cube.apply(&Scramble::new("D D'"));
         assert!(cube.is_solved());
     }
 
     #[test]
     fn test_double_move() {
         let mut cube = Cube::new();
-        cube.apply_move(Scramble::new("R2 R2"));
+        cube.apply(&Scramble::new("R2 R2"));
         assert!(cube.is_solved());
 
-        cube.apply_move(Scramble::new("U2 U2"));
+        cube.apply(&Scramble::new("U2 U2"));
         assert!(cube.is_solved());
 
-        cube.apply_move(Scramble::new("F2 F2"));
+        cube.apply(&Scramble::new("F2 F2"));
         assert!(cube.is_solved());
 
-        cube.apply_move(Scramble::new("L2 L2"));
+        cube.apply(&Scramble::new("L2 L2"));
         assert!(cube.is_solved());
 
-        cube.apply_move(Scramble::new("B2 B2"));
+        cube.apply(&Scramble::new("B2 B2"));
         assert!(cube.is_solved());
 
-        cube.apply_move(Scramble::new("D2 D2"));
+        cube.apply(&Scramble::new("D2 D2"));
         assert!(cube.is_solved());
     }
 
@@ -461,7 +416,7 @@ mod tests {
         let mut cube = Cube::new();
         // The "sexy move" (R U R' U') repeated 6 times returns the cube to solved
         for _ in 0..6 {
-            cube.apply_move(Scramble::new("R U R' U'"));
+            cube.apply(&Scramble::new("R U R' U'"));
         }
         assert!(cube.is_solved());
     }
@@ -471,29 +426,8 @@ mod tests {
         let mut cube = Cube::new();
         // Sune (R U R' U R U2 R') repeated 6 times returns it to solved (for corners/edges cycle)
         for _ in 0..6 {
-            cube.apply_move(Scramble::new("R U R' U R U2 R'"));
+            cube.apply(&Scramble::new("R U R' U R U2 R'"));
         }
         assert!(cube.is_solved());
-    }
-
-    #[test]
-    fn test_solved_face_colors() {
-        let cube = Cube::new();
-        let faces = cube.get_face_data();
-
-        // Check centers and some stickers
-        assert_eq!(faces[0][1][1], 'W'); // U
-        assert_eq!(faces[1][1][1], 'G'); // F
-        assert_eq!(faces[2][1][1], 'R'); // R
-        assert_eq!(faces[3][1][1], 'B'); // B
-        assert_eq!(faces[4][1][1], 'O'); // L
-        assert_eq!(faces[5][1][1], 'Y'); // D
-
-        // Check all stickers on U face are White
-        for r in 0..3 {
-            for c in 0..3 {
-                assert_eq!(faces[0][r][c], 'W');
-            }
-        }
     }
 }

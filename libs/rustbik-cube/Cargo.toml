@@ -3,5 +3,10 @@ name = "rustbik-cube"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+name = "rustbik_cube"
+crate-type = ["lib", "cdylib"]
+
 [dependencies]
 rand = "0.10.1"
+pyo3 = { version = "0.28.3", features = ["extension-module"] }

@@ -1,13 +1,13 @@
 # rustbik-cube
 
-`rustbik-cube` is the core library for the Rustbik project, providing a high-performance 3x3 Rubik's Cube simulation engine. It uses bitboards to represent the cube state efficiently and supports arbitrary scramble sequences.
+`rustbik-cube` is a high-performance 3x3 Rubik's Cube simulation engine for Rust. It is designed to be lightweight, efficient, and easily extensible for solving algorithms and external bindings.
 
-## Features
+## Core Concepts
 
-- **Efficient State Representation**: Uses bitboards for edge and corner tracking.
-- **Scramble Support**: Includes a parser for Singmaster notation and random scramble generation.
-- **Move Validation**: Fully functional face rotation logic.
-- **Zero-Dependency Core**: Lightweight design.
+- **Bitboard Engine**: Represents the cube state using optimized bit manipulation for edges and corners.
+- **Two-Phase Solver**: Native implementation of the Kociemba algorithm for finding solutions under 20 moves.
+- **Singmaster Notation**: Full support for parsing and generating standard scramble strings.
+- **Python Bindings**: Built with PyO3, allowing the library to be imported directly into Python environments.
 
 ## Usage
 
@@ -15,7 +15,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-rustbik-cube = { path = "path/to/libs/rustbik-cube" }
+rustbik-cube = { path = "libs/rustbik-cube" }
 ```
 
 ### Basic Example
@@ -24,22 +24,19 @@ rustbik-cube = { path = "path/to/libs/rustbik-cube" }
 use rustbik_cube::{Cube, Scramble};
 
 fn main() {
-    // Create a new solved cube
     let mut cube = Cube::new();
-
-    // Apply a scramble
     let scramble = Scramble::new("R U R' U'");
-    cube.apply_move(scramble);
-
-    // Check state
+    
+    cube.apply(&scramble);
+    
     if !cube.is_solved() {
         println!("Cube is scrambled!");
     }
 }
 ```
 
-## Architecture
+## Module Structure
 
-- `cube.rs`: Implements the bitboard-based state and rotation logic.
-- `moves.rs`: Handles parsing and random generation of scramble sequences.
-
+- `cube.rs`: Bitboard state and rotation logic.
+- `moves.rs`: Scramble parsing and random generation.
+- `solvers/`: Specialized solving algorithms (Kociemba).

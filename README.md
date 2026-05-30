@@ -1,14 +1,17 @@
 # Rustbik
 
-Rustbik is a TUI (Terminal User Interface) utility for Rubik's Cube enthusiasts, focused on high performance and a minimalist design.
+Rustbik is a high-performance Rubik's Cube utility suite built with Rust, featuring a terminal-based simulator and a powerful solving engine.
 
-This project is developed as a modular monorepo using Rust and the `ratatui` library for terminal rendering.
+## Key Components
+
+- **Terminal UI**: A full-featured TUI for scrambling, timing, and visualizing moves.
+- **Solving Engine**: High-speed implementation of the Kociemba algorithm.
+- **Python Integration**: The core engine is available as a Python module for research and automation.
 
 ## Project Structure
 
-- `apps/rustbik-tui`: Terminal interface application (the main program).
-- `libs/rustbik-cube`: Core cube logic, including state manipulation.
-
+- `apps/rustbik-tui`: The terminal interface (Ratatui).
+- `libs/rustbik-cube`: The core simulation and solving library.
 
 ## How to Run
 

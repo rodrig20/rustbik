@@ -71,7 +71,7 @@ impl TimerScreen {
             running_since: None,
             last_duration: Duration::ZERO,
             is_running: false,
-            cube: Cube::new_with(scramble),
+            cube: Cube::new_with(&scramble),
             scramble_str,
         }
     }
@@ -236,7 +236,7 @@ impl Screen for TimerScreen {
                 let scramble = Scramble::random(25);
                 let scramble_str = scramble.to_string();
 
-                self.cube = Cube::new_with(scramble);
+                self.cube = Cube::new_with(&scramble);
                 self.scramble_str = scramble_str;
             }
             let warning_text = Paragraph::new("Window too small").alignment(Alignment::Center);
@@ -329,7 +329,7 @@ impl Screen for TimerScreen {
                 let scramble = Scramble::random(25);
                 let scramble_str = scramble.to_string();
 
-                self.cube = Cube::new_with(scramble);
+                self.cube = Cube::new_with(&scramble);
                 self.scramble_str = scramble_str;
             }
             return ScreenAction::None;
