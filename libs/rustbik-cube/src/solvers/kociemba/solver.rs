@@ -390,11 +390,7 @@ impl G1Solver {
         let mut solver = Self::new(cube, 0);
         for limit in 0..12 {
             solver.reset(limit);
-            let mut result = None;
-            while let Some(path) = solver.next() {
-                result = Some(path);
-            }
-            if let Some(path_indices) = result {
+            if let Some(path_indices) = solver.next() {
                 return Some(path_indices.iter().map(|&i| MOVE_LIST[i]).collect());
             }
         }
