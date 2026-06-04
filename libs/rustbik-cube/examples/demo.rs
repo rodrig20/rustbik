@@ -1,4 +1,4 @@
-use rustbik_cube::kociemba::solve;
+use rustbik_cube::kociemba::solve_max_moves;
 use rustbik_cube::{Cube, Scramble};
 
 fn main() -> std::io::Result<()> {
@@ -17,7 +17,7 @@ fn main() -> std::io::Result<()> {
 
     // Invoke the Kociemba two-phase solver
     // This requires precomputed lookup tables to be present in the tables/ directory
-    match solve(&cube) {
+    match solve_max_moves(&cube, 22) {
         Some(path) => {
             println!("Found solution of {} moves:", path.len());
 

@@ -3,7 +3,7 @@ use std::fs;
 use std::io::Write;
 use std::path::Path;
 
-use super::{G1_MOVE_LIST, KociembaCube, LOW_MEMORY, TABLE_DIR};
+use super::{G1_MOVE_LIST, KociembaCube, TABLE_DIR};
 use crate::MOVE_LIST;
 
 /// Checks if all necessary lookup tables for Kociemba's algorithm exist
@@ -11,10 +11,9 @@ fn check_g1_tables() -> bool {
     Path::new(&format!("{}/eo_table.bin", TABLE_DIR)).exists()
         && Path::new(&format!("{}/co_table.bin", TABLE_DIR)).exists()
         && Path::new(&format!("{}/uds_table.bin", TABLE_DIR)).exists()
-        && (LOW_MEMORY
-            || (Path::new(&format!("{}/eo_move.bin", TABLE_DIR)).exists()
-                && Path::new(&format!("{}/co_move.bin", TABLE_DIR)).exists()
-                && Path::new(&format!("{}/uds_move.bin", TABLE_DIR)).exists()))
+        && Path::new(&format!("{}/eo_move.bin", TABLE_DIR)).exists()
+        && Path::new(&format!("{}/co_move.bin", TABLE_DIR)).exists()
+        && Path::new(&format!("{}/uds_move.bin", TABLE_DIR)).exists()
 }
 
 /// Checks if all necessary G2 lookup tables exist
@@ -22,10 +21,9 @@ fn check_g2_tables() -> bool {
     Path::new(&format!("{}/ep_no_uds_table.bin", TABLE_DIR)).exists()
         && Path::new(&format!("{}/ep_uds_table.bin", TABLE_DIR)).exists()
         && Path::new(&format!("{}/cp_table.bin", TABLE_DIR)).exists()
-        && (LOW_MEMORY
-            || (Path::new(&format!("{}/cp_move.bin", TABLE_DIR)).exists()
-                && Path::new(&format!("{}/ep_no_uds_move.bin", TABLE_DIR)).exists()
-                && Path::new(&format!("{}/ep_uds_move.bin", TABLE_DIR)).exists()))
+        && Path::new(&format!("{}/cp_move.bin", TABLE_DIR)).exists()
+        && Path::new(&format!("{}/ep_no_uds_move.bin", TABLE_DIR)).exists()
+        && Path::new(&format!("{}/ep_uds_move.bin", TABLE_DIR)).exists()
 }
 
 /// Generates phase 1 (G0 to G1) lookup tables using Breadth-First Search (BFS)
@@ -196,31 +194,29 @@ fn gen_g2_tables() -> std::io::Result<()> {
     fs::File::create(format!("{}/ep_uds_table.bin", TABLE_DIR))?.write_all(&ep_uds_dists)?;
     fs::File::create(format!("{}/cp_table.bin", TABLE_DIR))?.write_all(&cp_dists)?;
 
-    // Save phase 2 move tables if low-memory mode is disabled
-    if !LOW_MEMORY {
-        let cp_move_data = unsafe {
-            std::slice::from_raw_parts(
-                cp_move.as_ptr() as *const u8,
-                std::mem::size_of_val(&cp_move),
-            )
-        };
-        fs::File::create(format!("{}/cp_move.bin", TABLE_DIR))?.write_all(cp_move_data)?;
-        let ep_no_uds_move_data = unsafe {
-            std::slice::from_raw_parts(
-                ep_no_uds_move.as_ptr() as *const u8,
-                std::mem::size_of_val(&ep_no_uds_move),
-            )
-        };
-        fs::File::create(format!("{}/ep_no_uds_move.bin", TABLE_DIR))?
-            .write_all(ep_no_uds_move_data)?;
-        let ep_uds_move_data = unsafe {
-            std::slice::from_raw_parts(
-                ep_uds_move.as_ptr() as *const u8,
-                std::mem::size_of_val(&ep_uds_move),
-            )
-        };
-        fs::File::create(format!("{}/ep_uds_move.bin", TABLE_DIR))?.write_all(ep_uds_move_data)?;
-    }
+    // Save phase 2 move tables
+    let cp_move_data = unsafe {
+        std::slice::from_raw_parts(
+            cp_move.as_ptr() as *const u8,
+            std::mem::size_of_val(&cp_move),
+        )
+    };
+    fs::File::create(format!("{}/cp_move.bin", TABLE_DIR))?.write_all(cp_move_data)?;
+    let ep_no_uds_move_data = unsafe {
+        std::slice::from_raw_parts(
+            ep_no_uds_move.as_ptr() as *const u8,
+            std::mem::size_of_val(&ep_no_uds_move),
+        )
+    };
+    fs::File::create(format!("{}/ep_no_uds_move.bin", TABLE_DIR))?
+        .write_all(ep_no_uds_move_data)?;
+    let ep_uds_move_data = unsafe {
+        std::slice::from_raw_parts(
+            ep_uds_move.as_ptr() as *const u8,
+            std::mem::size_of_val(&ep_uds_move),
+        )
+    };
+    fs::File::create(format!("{}/ep_uds_move.bin", TABLE_DIR))?.write_all(ep_uds_move_data)?;
 
     Ok(())
 }
