@@ -8,9 +8,8 @@ use crate::MOVE_LIST;
 
 /// Checks if all necessary lookup tables for Kociemba's algorithm exist
 fn check_g1_tables() -> bool {
-    Path::new(&format!("{}/eo_table.bin", TABLE_DIR)).exists()
-        && Path::new(&format!("{}/co_table.bin", TABLE_DIR)).exists()
-        && Path::new(&format!("{}/uds_table.bin", TABLE_DIR)).exists()
+    Path::new(&format!("{}/eo_uds_table.bin", TABLE_DIR)).exists()
+        && Path::new(&format!("{}/co_uds_table.bin", TABLE_DIR)).exists()
         && Path::new(&format!("{}/eo_move.bin", TABLE_DIR)).exists()
         && Path::new(&format!("{}/co_move.bin", TABLE_DIR)).exists()
         && Path::new(&format!("{}/uds_move.bin", TABLE_DIR)).exists()
@@ -18,9 +17,8 @@ fn check_g1_tables() -> bool {
 
 /// Checks if all necessary G2 lookup tables exist
 fn check_g2_tables() -> bool {
-    Path::new(&format!("{}/ep_no_uds_table.bin", TABLE_DIR)).exists()
-        && Path::new(&format!("{}/ep_uds_table.bin", TABLE_DIR)).exists()
-        && Path::new(&format!("{}/cp_table.bin", TABLE_DIR)).exists()
+    Path::new(&format!("{}/ep_table.bin", TABLE_DIR)).exists()
+        && Path::new(&format!("{}/cp_uds_table.bin", TABLE_DIR)).exists()
         && Path::new(&format!("{}/cp_move.bin", TABLE_DIR)).exists()
         && Path::new(&format!("{}/ep_no_uds_move.bin", TABLE_DIR)).exists()
         && Path::new(&format!("{}/ep_uds_move.bin", TABLE_DIR)).exists()
@@ -36,9 +34,8 @@ fn gen_g1_tables() -> std::io::Result<()> {
     }
 
     // Initialize distance tables with 255 (representing infinity/unreached)
-    let mut eo_dists = [255u8; 2048];
-    let mut co_dists = [255u8; 2187];
-    let mut uds_dists = [255u8; 495];
+    let mut eo_uds_dists = [255u8; 2048 * 495];
+    let mut co_uds_dists = [255u8; 2187 * 495];
 
     // Initialize move tables
     let mut eo_move = [[0u16; 18]; 2048];
@@ -48,9 +45,8 @@ fn gen_g1_tables() -> std::io::Result<()> {
     let start_cube = KociembaCube::new();
 
     // The solved state has a distance of 0 for all coordinates
-    eo_dists[0] = 0;
-    co_dists[0] = 0;
-    uds_dists[0] = 0;
+    eo_uds_dists[0] = 0;
+    co_uds_dists[0] = 0;
 
     // BFS Queue stores (KociembaCube, current_eo, current_co, current_uds)
     let mut queue: VecDeque<(KociembaCube, usize, usize, usize)> = VecDeque::new();
@@ -74,18 +70,13 @@ fn gen_g1_tables() -> std::io::Result<()> {
 
             let mut discovered = false;
             // Update EO distance if this coordinate was never reached before
-            if eo_dists[n_eo] == 255 {
-                eo_dists[n_eo] = eo_dists[d_eo] + 1;
+            if eo_uds_dists[(n_es * 2048) + n_eo] == 255 {
+                eo_uds_dists[(n_es * 2048) + n_eo] = eo_uds_dists[(d_es * 2048) + d_eo] + 1;
                 discovered = true;
             }
             // Update CO distance
-            if co_dists[n_co] == 255 {
-                co_dists[n_co] = co_dists[d_co] + 1;
-                discovered = true;
-            }
-            // Update UDS slice distance
-            if uds_dists[n_es] == 255 {
-                uds_dists[n_es] = uds_dists[d_es] + 1;
+            if co_uds_dists[(n_es * 2187) + n_co] == 255 {
+                co_uds_dists[(n_es * 2187) + n_co] = co_uds_dists[(d_es * 2187) + d_co] + 1;
                 discovered = true;
             }
 
@@ -97,9 +88,8 @@ fn gen_g1_tables() -> std::io::Result<()> {
     }
 
     // Save pruning tables to binary files
-    fs::File::create(format!("{}/eo_table.bin", TABLE_DIR))?.write_all(&eo_dists)?;
-    fs::File::create(format!("{}/co_table.bin", TABLE_DIR))?.write_all(&co_dists)?;
-    fs::File::create(format!("{}/uds_table.bin", TABLE_DIR))?.write_all(&uds_dists)?;
+    fs::File::create(format!("{}/eo_uds_table.bin", TABLE_DIR))?.write_all(&eo_uds_dists)?;
+    fs::File::create(format!("{}/co_uds_table.bin", TABLE_DIR))?.write_all(&co_uds_dists)?;
 
     // Save move tables to binary files using unsafe raw memory access for performance
     let eo_move_data = unsafe {
@@ -136,9 +126,8 @@ fn gen_g2_tables() -> std::io::Result<()> {
     }
 
     // Distances for CP (Corner Permutation) and EP (Edge Permutation)
-    let mut ep_no_uds_dists = [255u8; 40320];
-    let mut ep_uds_dists = [255u8; 24];
-    let mut cp_dists = [255u8; 40320];
+    let mut ep_dists = [255u8; 40320*24];
+    let mut cp_uds_dists = [255u8; 40320*24];
 
     // Move tables for phase 2 coordinates
     let mut cp_move = [[0u16; 10]; 40320];
@@ -147,9 +136,8 @@ fn gen_g2_tables() -> std::io::Result<()> {
 
     let start_cube = KociembaCube::new();
 
-    ep_no_uds_dists[0] = 0;
-    ep_uds_dists[0] = 0;
-    cp_dists[0] = 0;
+    ep_dists[0] = 0;
+    cp_uds_dists[0] = 0;
 
     let mut queue: VecDeque<(KociembaCube, usize, usize, usize)> = VecDeque::new();
     queue.push_back((start_cube, 0, 0, 0));
@@ -170,16 +158,12 @@ fn gen_g2_tables() -> std::io::Result<()> {
             ep_uds_move[d_ep_uds][i] = n_ep_uds as u16;
 
             let mut discovered = false;
-            if ep_no_uds_dists[n_ep_no_uds] == 255 {
-                ep_no_uds_dists[n_ep_no_uds] = ep_no_uds_dists[d_ep_no_uds] + 1;
+            if ep_dists[(n_ep_uds*40320)+ n_ep_no_uds] == 255 {
+                ep_dists[(n_ep_uds*40320)+ n_ep_no_uds] = ep_dists[(d_ep_uds*40320)+ d_ep_no_uds] + 1;
                 discovered = true;
             }
-            if ep_uds_dists[n_ep_uds] == 255 {
-                ep_uds_dists[n_ep_uds] = ep_uds_dists[d_ep_uds] + 1;
-                discovered = true;
-            }
-            if cp_dists[n_cp] == 255 {
-                cp_dists[n_cp] = cp_dists[d_cp] + 1;
+            if cp_uds_dists[(n_ep_uds*40320)+ n_cp] == 255 {
+                cp_uds_dists[(n_ep_uds*40320)+ n_cp] = cp_uds_dists[(d_ep_uds*40320)+ d_cp] + 1;
                 discovered = true;
             }
 
@@ -190,9 +174,8 @@ fn gen_g2_tables() -> std::io::Result<()> {
     }
 
     // Save phase 2 pruning tables
-    fs::File::create(format!("{}/ep_no_uds_table.bin", TABLE_DIR))?.write_all(&ep_no_uds_dists)?;
-    fs::File::create(format!("{}/ep_uds_table.bin", TABLE_DIR))?.write_all(&ep_uds_dists)?;
-    fs::File::create(format!("{}/cp_table.bin", TABLE_DIR))?.write_all(&cp_dists)?;
+    fs::File::create(format!("{}/ep_table.bin", TABLE_DIR))?.write_all(&ep_dists)?;
+    fs::File::create(format!("{}/cp_uds_table.bin", TABLE_DIR))?.write_all(&cp_uds_dists)?;
 
     // Save phase 2 move tables
     let cp_move_data = unsafe {
