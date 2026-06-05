@@ -6,7 +6,7 @@ mod utils;
 pub use constants::TABLE_DIR;
 pub(crate) use utils::{G1_MOVE_LIST, KociembaCube};
 
-pub use solver::{solve, solve_max_moves};
+pub use solver::{solve, solve_max_moves, solve_time_limit};
 pub use tables::gen_tables;
 
 #[cfg(test)]

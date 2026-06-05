@@ -1,6 +1,6 @@
 use bytemuck::cast_slice;
 use std::sync::OnceLock;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use std::{fs, usize};
 
 use super::{G1_MOVE_LIST, KociembaCube, TABLE_DIR};
@@ -215,21 +215,38 @@ pub fn solve(cube: &Cube) -> Option<Vec<SingleMove>> {
 }
 
 pub fn solve_max_moves(cube: &Cube, max_moves: usize) -> Option<Vec<SingleMove>> {
-    println!("Starting Kociemba solver (max moves: {})...", max_moves);
-    let total_start = Instant::now();
-
-    // Reuse a single G1Solver across depth limits
+    let mut best: Option<Vec<SingleMove>> = None;
     let mut g1_solver = G1Solver::new(cube, 0);
-    for g1_limit in 0..=max_moves {
-        let depth_start = Instant::now();
-        println!("Searching at G1 depth {}...", g1_limit);
 
+    for g1_limit in 0..12 {
         g1_solver.reset(g1_limit);
-        let mut solutions_at_this_depth = 0;
+        if let Some(path_indices) = g1_solver.next() {
+            let mut solution = Vec::new();
+            let mut current_cube = cube.clone();
+            for &mv_idx in &path_indices {
+                let mv = MOVE_LIST[mv_idx];
+                current_cube.turn(&mv);
+                solution.push(mv);
+            }
+            if let Some(mut g2_moves) = G2Solver::solve(&current_cube, 18) {
+                solution.append(&mut g2_moves);
+                let total = solution.len();
+                best = Some(solution);
+                if total <= max_moves {
+                    return best;
+                }
+                break;
+            }
+        }
+    }
+
+    let upper = best.as_ref()?.len();
+
+    for g1_limit in 0..upper {
+        g1_solver.reset(g1_limit);
 
         for path_indices in &mut g1_solver {
-            solutions_at_this_depth += 1;
-            let mut solution = Vec::with_capacity(max_moves);
+            let mut solution = Vec::new();
             let mut current_cube = cube.clone();
 
             for &mv_idx in &path_indices {
@@ -238,34 +255,90 @@ pub fn solve_max_moves(cube: &Cube, max_moves: usize) -> Option<Vec<SingleMove>>
                 solution.push(mv);
             }
 
-            // Phase 2: Solve from G1 to solved state
-            // Intelligent limit: Phase 2 only needs to find a solution that fits within remaining moves
-            let remaining_limit = max_moves.saturating_sub(solution.len());
-            if let Some(mut g2_moves) = G2Solver::solve(&current_cube, remaining_limit) {
+            let g2_limit = best.as_ref().unwrap().len().saturating_sub(solution.len() + 1);
+
+            if let Some(mut g2_moves) = G2Solver::solve(&current_cube, g2_limit) {
                 solution.append(&mut g2_moves);
-                let duration = total_start.elapsed();
-                println!(
-                    "Solution found! Length: {} (Total time: {:?})",
-                    solution.len(),
-                    duration
-                );
-                return Some(solution);
+                let total = solution.len();
+                best = Some(solution);
+
+                if total <= max_moves {
+                    return best;
+                }
+                break;
+            }
+        }
+    }
+
+    best
+}
+
+pub fn solve_time_limit(cube: &Cube, time_limit: Duration) -> Option<Vec<SingleMove>> {
+    let deadline = Instant::now() + time_limit;
+
+    let mut best: Option<Vec<SingleMove>> = None;
+    let mut g1_solver = G1Solver::new(cube, 0);
+
+    // Phase 1: quick scan
+    for g1_limit in 0..12 {
+        if Instant::now() >= deadline {
+            return best;
+        }
+        g1_solver.reset(g1_limit);
+        if let Some(path_indices) = g1_solver.next() {
+            let mut solution = Vec::new();
+            let mut current_cube = cube.clone();
+            for &mv_idx in &path_indices {
+                let mv = MOVE_LIST[mv_idx];
+                current_cube.turn(&mv);
+                solution.push(mv);
+            }
+            if let Some(mut g2_moves) = G2Solver::solve(&current_cube, 18) {
+                solution.append(&mut g2_moves);
+                best = Some(solution);
+                break;
+            }
+        }
+    }
+
+    if best.is_none() {
+        return None;
+    }
+
+    let mut g1_limit: usize = 0;
+    let upper = best.as_ref().unwrap().len();
+
+    // Phase 2: improve until time runs out
+    while Instant::now() < deadline && g1_limit < upper {
+        g1_solver.reset(g1_limit);
+
+        for path_indices in &mut g1_solver {
+            if Instant::now() >= deadline {
+                return best;
+            }
+
+            let mut solution = Vec::new();
+            let mut current_cube = cube.clone();
+
+            for &mv_idx in &path_indices {
+                let mv = MOVE_LIST[mv_idx];
+                current_cube.turn(&mv);
+                solution.push(mv);
+            }
+
+            let g2_limit = best.as_ref().unwrap().len().saturating_sub(solution.len() + 1);
+
+            if let Some(mut g2_moves) = G2Solver::solve(&current_cube, g2_limit) {
+                solution.append(&mut g2_moves);
+                best = Some(solution);
+                break;
             }
         }
 
-        let depth_duration = depth_start.elapsed();
-        println!(
-            "G1 Depth {} finished in {:?} (found {} G1 candidates)",
-            g1_limit, depth_duration, solutions_at_this_depth
-        );
+        g1_limit += 1;
     }
 
-    println!(
-        "No solution found within {} moves. (Total time: {:?})",
-        max_moves,
-        total_start.elapsed()
-    );
-    None
+    best
 }
 
 type MoveTable = [[u16; 18]];

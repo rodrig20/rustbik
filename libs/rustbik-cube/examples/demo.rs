@@ -1,4 +1,6 @@
-use rustbik_cube::kociemba::solve_max_moves;
+use std::time::{Duration, Instant};
+
+use rustbik_cube::kociemba::{solve, solve_max_moves, solve_time_limit};
 use rustbik_cube::{Cube, Scramble};
 
 fn main() -> std::io::Result<()> {
@@ -17,9 +19,17 @@ fn main() -> std::io::Result<()> {
 
     // Invoke the Kociemba two-phase solver
     // This requires precomputed lookup tables to be present in the tables/ directory
-    match solve_max_moves(&cube, 22) {
+    let start = Instant::now();
+    match solve_time_limit(&cube, Duration::from_secs(10)) {
+    //match solve_max_moves(&cube, 20) {
+    //match solve(&cube) {
         Some(path) => {
-            println!("Found solution of {} moves:", path.len());
+            let end = start.elapsed();
+            println!(
+                "Found solution in {}ms of {} moves:",
+                end.as_millis(),
+                path.len()
+            );
 
             // Apply each move of the solution to the cube to verify it reaches the solved state
             for mv in path {
