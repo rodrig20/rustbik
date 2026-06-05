@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use std::{fs, usize};
 
 use super::{G1_MOVE_LIST, KociembaCube, TABLE_DIR};
-use crate::moves::{MoveAxis, SingleMove};
+use crate::moves::{MoveAxis, SingleMove, Scramble};
 use crate::{Cube, MOVE_LIST};
 
 struct G2Frame {
@@ -208,7 +208,7 @@ pub fn solve(cube: &Cube) -> Option<Vec<SingleMove>> {
     // 2nd stage: solve from G1 to solved (Phase 2 usually doesn't exceed 18 moves)
     if let Some(mut moves) = G2Solver::solve(&current_cube, 18) {
         solution.append(&mut moves);
-        Some(solution)
+        Some(Scramble::from_moves(solution).move_list)
     } else {
         None
     }
@@ -230,8 +230,9 @@ pub fn solve_max_moves(cube: &Cube, max_moves: usize) -> Option<Vec<SingleMove>>
             }
             if let Some(mut g2_moves) = G2Solver::solve(&current_cube, 18) {
                 solution.append(&mut g2_moves);
-                let total = solution.len();
-                best = Some(solution);
+                let optimized = Scramble::from_moves(solution).move_list;
+                let total = optimized.len();
+                best = Some(optimized);
                 if total <= max_moves {
                     return best;
                 }
@@ -259,8 +260,9 @@ pub fn solve_max_moves(cube: &Cube, max_moves: usize) -> Option<Vec<SingleMove>>
 
             if let Some(mut g2_moves) = G2Solver::solve(&current_cube, g2_limit) {
                 solution.append(&mut g2_moves);
-                let total = solution.len();
-                best = Some(solution);
+                let optimized = Scramble::from_moves(solution).move_list;
+                let total = optimized.len();
+                best = Some(optimized);
 
                 if total <= max_moves {
                     return best;
@@ -295,7 +297,7 @@ pub fn solve_time_limit(cube: &Cube, time_limit: Duration) -> Option<Vec<SingleM
             }
             if let Some(mut g2_moves) = G2Solver::solve(&current_cube, 18) {
                 solution.append(&mut g2_moves);
-                best = Some(solution);
+                best = Some(Scramble::from_moves(solution).move_list);
                 break;
             }
         }
@@ -330,7 +332,7 @@ pub fn solve_time_limit(cube: &Cube, time_limit: Duration) -> Option<Vec<SingleM
 
             if let Some(mut g2_moves) = G2Solver::solve(&current_cube, g2_limit) {
                 solution.append(&mut g2_moves);
-                best = Some(solution);
+                best = Some(Scramble::from_moves(solution).move_list);
                 break;
             }
         }

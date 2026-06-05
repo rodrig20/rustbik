@@ -238,6 +238,50 @@ impl Scramble {
         Self { move_list: list }
     }
 
+    /// Creates a Scramble from a list of moves, applying "stitching" optimizations:
+    /// 1. Combines consecutive moves on the same axis (e.g., R + R -> R2, R + R' -> Cancel)
+    /// 2. Combines commuting moves across an opposite face (e.g., U D U -> U2 D)
+    pub fn from_moves(moves: Vec<SingleMove>) -> Self {
+        let mut list: Vec<SingleMove> = Vec::with_capacity(moves.len());
+
+        for new_move in moves {
+            if list.is_empty() {
+                list.push(new_move);
+                continue;
+            }
+
+            // Optimization 1: Combine consecutive moves on the same axis
+            let last = list.last().copied().unwrap();
+            if last.axis == new_move.axis {
+                list.pop();
+                if let Some(combined) = SingleMove::combine(last, new_move) {
+                    list.push(combined);
+                }
+                continue;
+            }
+
+            // Optimization 2: Combine commuting moves (e.g., U D U -> U2 D)
+            // If the last two moves were 'a' and 'b', and 'a' has the same axis as 'new_move'
+            // while 'b' is in the same axis group (opposite face), we combine 'a' and 'new_move'
+            if list.len() >= 2 {
+                let a = list[list.len() - 2];
+                let b = list[list.len() - 1];
+
+                if a.axis == new_move.axis && a.axis.group() == b.axis.group() {
+                    list.remove(list.len() - 2);
+                    if let Some(combined) = SingleMove::combine(a, new_move) {
+                        list.insert(list.len() - 1, combined);
+                    }
+                    continue;
+                }
+            }
+
+            list.push(new_move);
+        }
+
+        Self { move_list: list }
+    }
+
     /// Generates a random scramble of a given length
     /// It ensures the scramble is "clean" by:
     /// 1. Not having two consecutive moves on the same axis (they are merged)
