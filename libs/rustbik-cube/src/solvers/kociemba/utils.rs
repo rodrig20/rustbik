@@ -190,6 +190,142 @@ impl KociembaCube {
         }
         coord
     }
+
+    fn rotate_axis(
+        &self,
+        next_edge_pos: [u64; 12],
+        next_corner_pos: [u64; 8],
+        corner_ori_rules: [[u64; 3]; 2],
+        edge_ori_mask: u16,
+    ) -> Self {
+        const CORNER_DIAGONAL_MASK: u8 = 0b01011010;
+
+        let mut new_edges: u64 = 0;
+        let mut new_corners: u64 = 0;
+
+        for i in 0..12 {
+            let current_edge = (self.edges >> (5 * i)) & 0b11111;
+            let current_edge_id = current_edge & 0b1111;
+            let future_edge_id = next_edge_pos[current_edge_id as usize];
+            let need_swap = ((edge_ori_mask >> i) & 1) != ((edge_ori_mask >> current_edge_id) & 1);
+            let new_edge = ((need_swap as u64 ^ ((current_edge >> 4) & 1)) << 4) | future_edge_id;
+            new_edges |= new_edge << (5 * next_edge_pos[i as usize]);
+        }
+
+        for i in 0..8 {
+            let current_corner = (self.corners >> (5 * i)) & 0b11111;
+            let current_corner_id = current_corner & 0b111;
+            let future_corner_id = next_corner_pos[current_corner_id as usize];
+            let diagonal = ((CORNER_DIAGONAL_MASK >> i) & 1
+                != (CORNER_DIAGONAL_MASK >> current_corner_id) & 1)
+                as usize;
+            let new_corner = (corner_ori_rules[diagonal][(current_corner >> 3) as usize] << 3)
+                | future_corner_id;
+            new_corners |= new_corner << (5 * next_corner_pos[i as usize]);
+        }
+
+        KociembaCube(Cube {
+            edges: new_edges,
+            corners: new_corners,
+        })
+    }
+    pub fn rotate_x(&self) -> Self {
+        const NEXT_EDGE_POS: [u64; 12] = [8, 5, 9, 1, 11, 7, 10, 3, 4, 6, 2, 0];
+        const NEXT_CORNER_POS: [u64; 8] = [4, 5, 1, 0, 7, 6, 2, 3];
+        const CORNER_ORI_RULES: [[u64; 3]; 2] = [[0, 2, 1], [2, 1, 0]];
+        const EDGE_ORI_MASK: u16 = 0b111101010101;
+
+        self.rotate_axis(
+            NEXT_EDGE_POS,
+            NEXT_CORNER_POS,
+            CORNER_ORI_RULES,
+            EDGE_ORI_MASK,
+        )
+    }
+
+    pub fn rotate_y(&self) -> Self {
+        const NEXT_EDGE_POS: [u64; 12] = [1, 2, 3, 0, 5, 6, 7, 4, 9, 10, 11, 8];
+        const NEXT_CORNER_POS: [u64; 8] = [1, 2, 3, 0, 5, 6, 7, 4];
+        const CORNER_ORI_RULES: [[u64; 3]; 2] = [[0, 2, 1], [0, 2, 1]];
+        const EDGE_ORI_MASK: u16 = 0b111100000000;
+
+        self.rotate_axis(
+            NEXT_EDGE_POS,
+            NEXT_CORNER_POS,
+            CORNER_ORI_RULES,
+            EDGE_ORI_MASK,
+        )
+    }
+
+    pub fn rotate_z(&self) -> Self {
+        const NEXT_EDGE_POS: [u64; 12] = [4, 8, 0, 11, 6, 9, 2, 10, 5, 1, 3, 7];
+        const NEXT_CORNER_POS: [u64; 8] = [4, 0, 3, 7, 5, 1, 2, 6];
+        const CORNER_ORI_RULES: [[u64; 3]; 2] = [[0, 2, 1], [1, 0, 2]];
+        const EDGE_ORI_MASK: u16 = 0;
+
+        self.rotate_axis(
+            NEXT_EDGE_POS,
+            NEXT_CORNER_POS,
+            CORNER_ORI_RULES,
+            EDGE_ORI_MASK,
+        )
+    }
+
+    pub fn reflection(&self) -> Self {
+        const NEXT_EDGE_POS: [u64; 12] = [2, 1, 0, 3, 6, 5, 4, 7, 9, 8, 11, 10];
+        const NEXT_CORNER_POS: [u64; 8] = [1, 0, 3, 2, 5, 4, 7, 6];
+        const CORNER_ORI_RULES: [[u64; 3]; 2] = [[0, 1, 2], [0, 1, 2]];
+        const EDGE_ORI_MASK: u16 = 0;
+
+        self.rotate_axis(
+            NEXT_EDGE_POS,
+            NEXT_CORNER_POS,
+            CORNER_ORI_RULES,
+            EDGE_ORI_MASK,
+        )
+    }
+
+    pub fn apply_uds_symmetry(&self, i: u8) -> Self {
+        match i {
+            0 => *self,
+            1 => self.rotate_y(),
+            2 => self.rotate_y().rotate_y(),
+            3 => self.rotate_y().rotate_y().rotate_y(),
+
+            4 => self.rotate_x().rotate_x(),
+            5 => self.rotate_x().rotate_x().rotate_y(),
+            6 => self.rotate_z().rotate_z(),
+            7 => self.rotate_z().rotate_z().rotate_y(),
+
+            8 => self.reflection(),
+            9 => self.rotate_y().reflection(),
+            10 => self.rotate_y().rotate_y().reflection(),
+            11 => self.rotate_y().rotate_y().rotate_y().reflection(),
+
+            12 => self.rotate_x().rotate_x().reflection(),
+            13 => self.rotate_x().rotate_x().rotate_y().reflection(),
+            14 => self.rotate_z().rotate_z().reflection(),
+            15 => self.rotate_z().rotate_z().rotate_y().reflection(),
+
+            _ => self.apply_uds_symmetry(i % 16),
+        }
+    }
+
+    pub fn get_canonical(&self) -> (u16, u8) {
+        let mut min_coord: u16 = self.get_uds_coord();
+        let mut best_sym = 0;
+
+        for i in 1..16 {
+            let sym_cube = self.apply_uds_symmetry(i);
+
+            let uds = sym_cube.get_uds_coord();
+            if uds < min_coord {
+                min_coord = uds;
+                best_sym = i;
+            }
+        }
+        (min_coord, best_sym)
+    }
 }
 
 /// Calculates the mathematical combination nCr

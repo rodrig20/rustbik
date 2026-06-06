@@ -1,4 +1,5 @@
-use std::collections::VecDeque;
+use bytemuck::cast_slice;
+use std::collections::{HashSet, VecDeque};
 use std::fs;
 use std::io::Write;
 use std::path::Path;
@@ -33,63 +34,47 @@ fn gen_g1_tables() -> std::io::Result<()> {
         fs::create_dir_all(TABLE_DIR)?;
     }
 
-    // Initialize distance tables with 255 (representing infinity/unreached)
-    let mut eo_uds_dists = [255u8; 2048 * 495];
-    let mut co_uds_dists = [255u8; 2187 * 495];
+    // Carregamento mais limpo
+    let uds_map_bytes = fs::read(format!("{}/uds_map.bin", TABLE_DIR))?;
+    let uds_map: &[u16] = bytemuck::cast_slice(&uds_map_bytes);
 
-    // Initialize move tables
+    let raw_to_compact_uds_bytes = fs::read(format!("{}/raw_to_compact_uds.bin", TABLE_DIR))?;
+    let raw_to_compact_uds: &[u16] = cast_slice(&raw_to_compact_uds_bytes);
+
+    let mut eo_co_uds_dists: Box<[u8]> = vec![255u8; 2048 * 2187 * 45].into_boxed_slice();
     let mut eo_move = [[0u16; 18]; 2048];
     let mut co_move = [[0u16; 18]; 2187];
     let mut uds_move = [[0u16; 18]; 495];
 
     let start_cube = KociembaCube::new();
+    eo_co_uds_dists[0] = 0;
 
-    // The solved state has a distance of 0 for all coordinates
-    eo_uds_dists[0] = 0;
-    co_uds_dists[0] = 0;
-
-    // BFS Queue stores (KociembaCube, current_eo, current_co, current_uds)
-    let mut queue: VecDeque<(KociembaCube, usize, usize, usize)> = VecDeque::new();
-    queue.push_back((start_cube, 0, 0, 0));
+    let mut queue = VecDeque::from([(start_cube, 0usize, 0usize, 0usize)]);
 
     while let Some((current, d_eo, d_co, d_es)) = queue.pop_front() {
-        // Try all 18 possible moves from the current state
-        for (i, mv) in MOVE_LIST.iter().enumerate() {
+        for (i, &mv) in MOVE_LIST.iter().enumerate() {
             let mut next = current.clone();
             next.turn(&mv);
 
-            // Get coordinates of the new state
             let n_eo = next.get_eo_coord() as usize;
             let n_co = next.get_co_coord() as usize;
             let n_es = next.get_uds_coord() as usize;
 
-            // Fill move tables: source_coord + move_index -> destination_coord
             eo_move[d_eo][i] = n_eo as u16;
             co_move[d_co][i] = n_co as u16;
             uds_move[d_es][i] = n_es as u16;
 
-            let mut discovered = false;
-            // Update EO distance if this coordinate was never reached before
-            if eo_uds_dists[(n_es * 2048) + n_eo] == 255 {
-                eo_uds_dists[(n_es * 2048) + n_eo] = eo_uds_dists[(d_es * 2048) + d_eo] + 1;
-                discovered = true;
-            }
-            // Update CO distance
-            if co_uds_dists[(n_es * 2187) + n_co] == 255 {
-                co_uds_dists[(n_es * 2187) + n_co] = co_uds_dists[(d_es * 2187) + d_co] + 1;
-                discovered = true;
-            }
-
-            // If any new coordinate was found, add the cube to the queue for further exploration
-            if discovered {
+            let idx = (n_eo * 2187 * 45) + (n_co * 45) + raw_to_compact_uds[uds_map[n_es] as usize] as usize;
+            if eo_co_uds_dists[idx] == 255 {
+                eo_co_uds_dists[idx] =
+                    eo_co_uds_dists[(d_eo * 2187 * 45) + (d_co * 45) + raw_to_compact_uds[uds_map[d_es] as usize] as usize] + 1;
                 queue.push_back((next, n_eo, n_co, n_es));
             }
         }
     }
 
     // Save pruning tables to binary files
-    fs::File::create(format!("{}/eo_uds_table.bin", TABLE_DIR))?.write_all(&eo_uds_dists)?;
-    fs::File::create(format!("{}/co_uds_table.bin", TABLE_DIR))?.write_all(&co_uds_dists)?;
+    fs::File::create(format!("{}/eo_co_uds_table.bin", TABLE_DIR))?.write_all(&eo_co_uds_dists)?;
 
     // Save move tables to binary files using unsafe raw memory access for performance
     let eo_move_data = unsafe {
@@ -117,6 +102,66 @@ fn gen_g1_tables() -> std::io::Result<()> {
     Ok(())
 }
 
+fn gen_g1_sym_tables() -> std::io::Result<()> {
+    if !Path::new(TABLE_DIR).exists() {
+        fs::create_dir_all(TABLE_DIR)?;
+    }
+
+    let mut uds_map = [u16::MAX; 495];
+
+    let mut raw_to_compact_uds: HashSet<u16> = HashSet::new();
+
+    let start_cube = KociembaCube::new();
+
+    // BFS Queue stores (KociembaCube, current_eo, current_co, current_uds)
+    let mut queue: VecDeque<KociembaCube> = VecDeque::new();
+    queue.push_back(start_cube);
+
+    while let Some(current) = queue.pop_front() {
+        // Try all 18 possible moves from the current state
+        for mv in MOVE_LIST {
+            let mut next = current.clone();
+            next.turn(&mv);
+
+            let n_uds = next.get_uds_coord() as usize;
+
+            if uds_map[n_uds] == u16::MAX {
+                let (canon_uds, canon_sym) = next.get_canonical();
+                uds_map[n_uds] = canon_uds;
+                raw_to_compact_uds.insert(canon_uds);
+
+                queue.push_back(next);
+            }
+        }
+    }
+
+    // ori -> canon / canon -> norm
+    // 495 -> 45    / 45 -> 45
+
+    let mut raw_to_compact_uds_array: [u16; 495] = [0; 495];
+    for (i, v) in raw_to_compact_uds.iter().enumerate() {
+        raw_to_compact_uds_array[*v as usize] = i as u16;
+    }
+
+    let uds_map_data = unsafe {
+        std::slice::from_raw_parts(
+            uds_map.as_ptr() as *const u8,
+            std::mem::size_of_val(&uds_map),
+        )
+    };
+    fs::File::create(format!("{}/uds_map.bin", TABLE_DIR))?.write_all(uds_map_data)?;
+    let raw_to_compact_uds_vec_data = unsafe {
+        std::slice::from_raw_parts(
+            raw_to_compact_uds_array.as_ptr() as *const u8,
+            std::mem::size_of_val(&raw_to_compact_uds_array),
+        )
+    };
+    fs::File::create(format!("{}/raw_to_compact_uds.bin", TABLE_DIR))?
+        .write_all(raw_to_compact_uds_vec_data)?;
+
+    Ok(())
+}
+
 /// Generates phase 2 (G1 to solved) lookup tables using BFS
 /// This phase only uses the 10 moves allowed in the G1 group:
 /// U, U', U2, D, D', D2, F2, B2, R2, L2
@@ -126,8 +171,8 @@ fn gen_g2_tables() -> std::io::Result<()> {
     }
 
     // Distances for CP (Corner Permutation) and EP (Edge Permutation)
-    let mut ep_dists = [255u8; 40320*24];
-    let mut cp_uds_dists = [255u8; 40320*24];
+    let mut ep_dists = [255u8; 40320 * 24];
+    let mut cp_uds_dists = [255u8; 40320 * 24];
 
     // Move tables for phase 2 coordinates
     let mut cp_move = [[0u16; 10]; 40320];
@@ -158,12 +203,14 @@ fn gen_g2_tables() -> std::io::Result<()> {
             ep_uds_move[d_ep_uds][i] = n_ep_uds as u16;
 
             let mut discovered = false;
-            if ep_dists[(n_ep_uds*40320)+ n_ep_no_uds] == 255 {
-                ep_dists[(n_ep_uds*40320)+ n_ep_no_uds] = ep_dists[(d_ep_uds*40320)+ d_ep_no_uds] + 1;
+            if ep_dists[(n_ep_uds * 40320) + n_ep_no_uds] == 255 {
+                ep_dists[(n_ep_uds * 40320) + n_ep_no_uds] =
+                    ep_dists[(d_ep_uds * 40320) + d_ep_no_uds] + 1;
                 discovered = true;
             }
-            if cp_uds_dists[(n_ep_uds*40320)+ n_cp] == 255 {
-                cp_uds_dists[(n_ep_uds*40320)+ n_cp] = cp_uds_dists[(d_ep_uds*40320)+ d_cp] + 1;
+            if cp_uds_dists[(n_ep_uds * 40320) + n_cp] == 255 {
+                cp_uds_dists[(n_ep_uds * 40320) + n_cp] =
+                    cp_uds_dists[(d_ep_uds * 40320) + d_cp] + 1;
                 discovered = true;
             }
 
@@ -206,6 +253,7 @@ fn gen_g2_tables() -> std::io::Result<()> {
 
 /// Ensures all Kociemba lookup tables are present, generating them if necessary
 pub fn gen_tables() -> std::io::Result<()> {
+    gen_g1_sym_tables()?;
     if !check_g1_tables() {
         gen_g1_tables()?;
     }

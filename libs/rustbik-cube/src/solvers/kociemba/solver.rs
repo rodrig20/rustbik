@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use std::{fs, usize};
 
 use super::{G1_MOVE_LIST, KociembaCube, TABLE_DIR};
-use crate::moves::{MoveAxis, SingleMove, Scramble};
+use crate::moves::{MoveAxis, Scramble, SingleMove};
 use crate::{Cube, MOVE_LIST};
 
 struct G2Frame {
@@ -45,15 +45,15 @@ impl G2Solver {
     fn ep_table() -> &'static [u8] {
         static DATA: OnceLock<Vec<u8>> = OnceLock::new();
         DATA.get_or_init(|| {
-            fs::read(format!("{}/ep_table.bin", TABLE_DIR))
-                .expect("Failed to read ep_table.bin")
+            fs::read(format!("{}/ep_table.bin", TABLE_DIR)).expect("Failed to read ep_table.bin")
         })
     }
 
     fn cp_uds_table() -> &'static [u8] {
         static DATA: OnceLock<Vec<u8>> = OnceLock::new();
         DATA.get_or_init(|| {
-            fs::read(format!("{}/cp_uds_table.bin", TABLE_DIR)).expect("Failed to read cp_uds_table.bin")
+            fs::read(format!("{}/cp_uds_table.bin", TABLE_DIR))
+                .expect("Failed to read cp_uds_table.bin")
         })
     }
 
@@ -92,8 +92,8 @@ impl G2Solver {
         );
 
         let h0 = *[
-            Self::cp_uds_table()[(eu0*40320)+ cp0],
-            Self::ep_table()[(eu0*40320)+ enu0],
+            Self::cp_uds_table()[(eu0 * 40320) + cp0],
+            Self::ep_table()[(eu0 * 40320) + enu0],
         ]
         .iter()
         .max()
@@ -127,8 +127,8 @@ impl G2Solver {
                 }
 
                 let h = *[
-                    Self::cp_uds_table()[(ep_uds*40320)+cp],
-                    Self::ep_table()[(ep_uds*40320)+ep_no_uds],
+                    Self::cp_uds_table()[(ep_uds * 40320) + cp],
+                    Self::ep_table()[(ep_uds * 40320) + ep_no_uds],
                 ]
                 .iter()
                 .max()
@@ -256,7 +256,11 @@ pub fn solve_max_moves(cube: &Cube, max_moves: usize) -> Option<Vec<SingleMove>>
                 solution.push(mv);
             }
 
-            let g2_limit = best.as_ref().unwrap().len().saturating_sub(solution.len() + 1);
+            let g2_limit = best
+                .as_ref()
+                .unwrap()
+                .len()
+                .saturating_sub(solution.len() + 1);
 
             if let Some(mut g2_moves) = G2Solver::solve(&current_cube, g2_limit) {
                 solution.append(&mut g2_moves);
@@ -328,7 +332,11 @@ pub fn solve_time_limit(cube: &Cube, time_limit: Duration) -> Option<Vec<SingleM
                 solution.push(mv);
             }
 
-            let g2_limit = best.as_ref().unwrap().len().saturating_sub(solution.len() + 1);
+            let g2_limit = best
+                .as_ref()
+                .unwrap()
+                .len()
+                .saturating_sub(solution.len() + 1);
 
             if let Some(mut g2_moves) = G2Solver::solve(&current_cube, g2_limit) {
                 solution.append(&mut g2_moves);
@@ -421,6 +429,20 @@ impl G1Solver {
         })
     }
 
+    fn eo_co_uds_table() -> &'static [u8] {
+        static DATA: OnceLock<Box<[u8]>> = OnceLock::new();
+        let boxed_data = DATA.get_or_init(|| {
+            let vec = fs::read(format!("{}/eo_co_uds_table.bin", TABLE_DIR))
+                .expect("Failed to read eo_co_uds_table.bin");
+
+            // Transforma o Vec em um Box<[u8]> (reduz o tamanho da estrutura de 24 para 16 bytes)
+            vec.into_boxed_slice()
+        });
+
+        // Retorna o slice do Box (o Rust faz o 'coerção' de Box<[u8]> para &[u8] automaticamente)
+        boxed_data
+    }
+
     /// Resets the solver to search at a new depth limit, reusing the stack allocation
     pub fn reset(&mut self, limit: usize) {
         self.limit = limit;
@@ -460,6 +482,36 @@ impl G1Solver {
         cast_slice(raw)
     }
 
+    fn uds_map() -> &'static [u16] {
+        static DATA: OnceLock<Box<[u16]>> = OnceLock::new();
+
+        DATA.get_or_init(|| {
+            // 1. Lê os bytes do arquivo
+            let bytes =
+                fs::read(format!("{}/uds_map.bin", TABLE_DIR)).expect("Failed to read uds_map.bin");
+
+            // 2. Converte os bytes para &[u16] usando bytemuck
+            let slice: &[u16] = bytemuck::cast_slice(&bytes);
+
+            // 3. Converte para Box<[u16]> para armazenar permanentemente na Heap
+            slice.to_vec().into_boxed_slice()
+        })
+    }
+
+    fn raw_to_compact_uds() -> &'static [u16] {
+        static DATA: OnceLock<Box<[u16]>> = OnceLock::new();
+
+        DATA.get_or_init(|| {
+            // 1. Lê os bytes do arquivo
+            let bytes = fs::read(format!("{}/raw_to_compact_uds.bin", TABLE_DIR))
+                .expect("Failed to read raw_to_compact_uds.bin");
+
+            // 2. Converte os bytes para &[u16] (via bytemuck)
+            // e transforma em um Box<[u16]> para armazenamento estático na heap
+            cast_slice::<u8, u16>(&bytes).to_vec().into_boxed_slice()
+        })
+    }
+
     /// Conveniece method to solve Phase 1 in up to 12 moves
     pub fn solve(cube: &Cube) -> Option<Vec<SingleMove>> {
         let mut solver = Self::new(cube, 0);
@@ -490,13 +542,15 @@ impl Iterator for G1Solver {
                 return None;
             }
 
-            let h = *[
+            /*let h = *[
                 Self::eo_uds_table()[(uds * 2048) + eo],
                 Self::co_uds_table()[(uds * 2187) + co],
             ]
             .iter()
             .max()
-            .unwrap() as usize;
+            .unwrap() as usize;*/
+
+            let h = Self::eo_co_uds_table()[(eo * 2187 * 45) + (co * 45) + Self::raw_to_compact_uds()[Self::uds_map()[uds] as usize] as usize] as usize;
 
             // Goal reached
             if h == 0 && move_idx == 0 {
