@@ -8,7 +8,6 @@ fn main() -> std::io::Result<()> {
 
     // Define a complex scramble sequence using Singmaster notation
     let scramble = Scramble::new("U R2 F B R B2 R U2 L B2 R U' D' R2 F R' L B2 U2 F2");
-
     // Initialize a new solved cube and apply the scramble
     let mut cube = Cube::new();
     cube.apply(&scramble);
@@ -20,9 +19,7 @@ fn main() -> std::io::Result<()> {
     // Invoke the Kociemba two-phase solver
     // This requires precomputed lookup tables to be present in the tables/ directory
     let start = Instant::now();
-    match solve_time_limit(&cube, Duration::from_secs(10)) {
-    //match solve_max_moves(&cube, 20) {
-    //match solve(&cube) {
+    match solve_max_moves(&cube, 20) {
         Some(path) => {
             let end = start.elapsed();
             println!(
