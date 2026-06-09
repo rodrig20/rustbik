@@ -8,6 +8,7 @@ pub(crate) use utils::{G1_MOVE_LIST, KociembaCube};
 
 pub use solver::{solve, solve_max_moves, solve_time_limit};
 pub use tables::gen_tables;
+pub(crate) use tables::map_file;
 
 #[cfg(test)]
 mod tests {

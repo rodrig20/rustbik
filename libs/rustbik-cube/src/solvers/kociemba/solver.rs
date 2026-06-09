@@ -19,42 +19,14 @@ struct G2Frame {
 struct G2Solver;
 
 impl G2Solver {
-    fn ep_no_uds_table() -> &'static [u8] {
-        static DATA: OnceLock<Vec<u8>> = OnceLock::new();
-        DATA.get_or_init(|| {
-            fs::read(format!("{}/ep_no_uds_table.bin", TABLE_DIR))
-                .expect("Failed to read ep_no_uds_table.bin")
-        })
-    }
-
-    fn ep_uds_table() -> &'static [u8] {
-        static DATA: OnceLock<Vec<u8>> = OnceLock::new();
-        DATA.get_or_init(|| {
-            fs::read(format!("{}/ep_uds_table.bin", TABLE_DIR))
-                .expect("Failed to read ep_uds_table.bin")
-        })
-    }
-
-    fn cp_table() -> &'static [u8] {
-        static DATA: OnceLock<Vec<u8>> = OnceLock::new();
-        DATA.get_or_init(|| {
-            fs::read(format!("{}/cp_table.bin", TABLE_DIR)).expect("Failed to read cp_table.bin")
-        })
-    }
-
     fn ep_table() -> &'static [u8] {
-        static DATA: OnceLock<Vec<u8>> = OnceLock::new();
-        DATA.get_or_init(|| {
-            fs::read(format!("{}/ep_table.bin", TABLE_DIR)).expect("Failed to read ep_table.bin")
-        })
+        static DATA: OnceLock<&'static [u8]> = OnceLock::new();
+        *DATA.get_or_init(|| super::map_file(format!("{}/ep_table.bin", TABLE_DIR)))
     }
 
     fn cp_uds_table() -> &'static [u8] {
-        static DATA: OnceLock<Vec<u8>> = OnceLock::new();
-        DATA.get_or_init(|| {
-            fs::read(format!("{}/cp_uds_table.bin", TABLE_DIR))
-                .expect("Failed to read cp_uds_table.bin")
-        })
+         static DATA: OnceLock<&'static [u8]> = OnceLock::new();
+        *DATA.get_or_init(|| super::map_file(format!("{}/cp_uds_table.bin", TABLE_DIR)))
     }
 
     fn cp_move() -> &'static [[u16; 10]] {
@@ -380,49 +352,33 @@ impl G1Solver {
     }
 
     fn eo_uds_sym_map() -> &'static [u32] {
-        static DATA: OnceLock<Box<[u32]>> = OnceLock::new();
-        DATA.get_or_init(|| {
-            let bytes = fs::read(format!("{}/eo_uds_sym_map.bin", TABLE_DIR)).unwrap();
-            bytemuck::cast_slice(&bytes).to_vec().into_boxed_slice()
-        })
+        static DATA: OnceLock<&'static [u32]> = OnceLock::new();
+        *DATA.get_or_init(|| super::map_file(format!("{}/eo_uds_sym_map.bin", TABLE_DIR)))
     }
 
     fn co_sym_map() -> &'static [u16] {
-        static DATA: OnceLock<Box<[u16]>> = OnceLock::new();
-        DATA.get_or_init(|| {
-            let bytes = fs::read(format!("{}/co_sym_map.bin", TABLE_DIR)).unwrap();
-            bytemuck::cast_slice(&bytes).to_vec().into_boxed_slice()
-        })
+        static DATA: OnceLock<&'static [u16]> = OnceLock::new();
+        *DATA.get_or_init(|| super::map_file(format!("{}/co_sym_map.bin", TABLE_DIR)))
     }
 
     fn eo_co_uds_table() -> &'static [u8] {
-        static DATA: OnceLock<Box<[u8]>> = OnceLock::new();
-        DATA.get_or_init(|| {
-            fs::read(format!("{}/eo_co_uds_table.bin", TABLE_DIR))
-                .unwrap()
-                .into_boxed_slice()
-        })
+        static DATA: OnceLock<&'static [u8]> = OnceLock::new();
+        *DATA.get_or_init(|| super::map_file(format!("{}/eo_co_uds_table.bin", TABLE_DIR)))
     }
 
-    fn eo_move() -> &'static [[u16; 18]] {
-        static DATA: OnceLock<Vec<u8>> = OnceLock::new();
-        bytemuck::cast_slice(
-            DATA.get_or_init(|| fs::read(format!("{}/eo_move.bin", TABLE_DIR)).unwrap()),
-        )
+    fn eo_move() -> &'static [u16] {
+        static DATA: OnceLock<&'static [u16]> = OnceLock::new();
+        *DATA.get_or_init(|| super::map_file(format!("{}/eo_move.bin", TABLE_DIR)))
     }
 
-    fn co_move() -> &'static [[u16; 18]] {
-        static DATA: OnceLock<Vec<u8>> = OnceLock::new();
-        bytemuck::cast_slice(
-            DATA.get_or_init(|| fs::read(format!("{}/co_move.bin", TABLE_DIR)).unwrap()),
-        )
+    fn co_move() -> &'static [u16] {
+        static DATA: OnceLock<&'static [u16]> = OnceLock::new();
+        *DATA.get_or_init(|| super::map_file(format!("{}/co_move.bin", TABLE_DIR)))
     }
 
-    fn uds_move() -> &'static [[u16; 18]] {
-        static DATA: OnceLock<Vec<u8>> = OnceLock::new();
-        bytemuck::cast_slice(
-            DATA.get_or_init(|| fs::read(format!("{}/uds_move.bin", TABLE_DIR)).unwrap()),
-        )
+    fn uds_move() -> &'static [u16] {
+        static DATA: OnceLock<&'static [u16]> = OnceLock::new();
+        *DATA.get_or_init(|| super::map_file(format!("{}/uds_move.bin", TABLE_DIR)))
     }
 
     /// Conveniece method to solve Phase 1 in up to 12 moves
@@ -497,9 +453,9 @@ impl Iterator for G1Solver {
 
             // Transition to the next state
             let next_state = (
-                Self::eo_move()[eo][current_move_idx] as usize,
-                Self::co_move()[co][current_move_idx] as usize,
-                Self::uds_move()[uds][current_move_idx] as usize,
+                Self::eo_move()[(eo as usize * 18) + current_move_idx] as usize,
+                Self::co_move()[(co as usize * 18) + current_move_idx] as usize,
+                Self::uds_move()[(uds as usize * 18) + current_move_idx] as usize,
             );
 
             // Push the new frame to the stack

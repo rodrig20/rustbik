@@ -4,9 +4,37 @@ use std::fs;
 use std::io::Write;
 use std::path::Path;
 
+use bytemuck::{Pod, Zeroable};
+use memmap2::Mmap;
+use std::fs::File;
+use std::io::{BufWriter, Result};
+
 use super::{G1_MOVE_LIST, KociembaCube, TABLE_DIR};
 use crate::MOVE_LIST;
 
+/// Writes a slice of data to a binary file efficiently using a buffered writer
+pub(crate) fn write_table<T>(data: &[T], path: impl AsRef<Path>) -> Result<()>
+where
+    T: Pod + Zeroable,
+{
+    let file = File::create(path)?;
+    let mut writer = BufWriter::new(file);
+
+    writer.write_all(bytemuck::cast_slice(data))?;
+
+    writer.flush()?;
+    Ok(())
+}
+
+/// Memory-maps a file and returns a static reference to the data
+pub(crate) fn map_file<T: bytemuck::Pod>(path: String) -> &'static [T] {
+    let file = File::open(path).expect("Failed to open file");
+    let mmap = unsafe { Mmap::map(&file).expect("Failed to map file") };
+
+    let mmap_ref: &'static Mmap = Box::leak(Box::new(mmap));
+
+    bytemuck::cast_slice(mmap_ref)
+}
 /// Checks if all necessary lookup tables for Kociemba's algorithm exist
 fn check_g1_tables() -> bool {
     Path::new(&format!("{}/eo_co_uds_table.bin", TABLE_DIR)).exists()
@@ -68,15 +96,12 @@ fn gen_g1_tables() -> std::io::Result<()> {
     }
 
     // Save transition move tables
-    fs::File::create(format!("{}/eo_move.bin", TABLE_DIR))?.write_all(cast_slice(&eo_move))?;
-    fs::File::create(format!("{}/co_move.bin", TABLE_DIR))?.write_all(cast_slice(&co_move))?;
-    fs::File::create(format!("{}/uds_move.bin", TABLE_DIR))?.write_all(cast_slice(&uds_move))?;
+    write_table(&eo_move, format!("{}/eo_move.bin", TABLE_DIR))?;
+    write_table(&co_move, format!("{}/co_move.bin", TABLE_DIR))?;
+    write_table(&uds_move, format!("{}/uds_move.bin", TABLE_DIR))?;
 
-    let co_sym_map_bytes = fs::read(format!("{}/co_sym_map.bin", TABLE_DIR))?;
-    let co_sym_map: &[u16] = bytemuck::cast_slice(&co_sym_map_bytes);
-
-    let eo_uds_sym_move_bytes = fs::read(format!("{}/eo_uds_sym_move.bin", TABLE_DIR))?;
-    let eo_uds_sym_move: &[u32] = bytemuck::cast_slice(&eo_uds_sym_move_bytes);
+    let co_sym_map: &[u16] = map_file(format!("{}/co_sym_map.bin", TABLE_DIR));
+    let eo_uds_sym_move: &[u32] = map_file(format!("{}/eo_uds_sym_move.bin", TABLE_DIR));
 
     // BFS initialization: pruning_table stores distances (255 represents unvisited/infinity)
     let mut pruning_table: Box<[u8]> = vec![255u8; 64430 * 2187].into_boxed_slice();
@@ -119,7 +144,7 @@ fn gen_g1_tables() -> std::io::Result<()> {
         }
     }
 
-    fs::File::create(format!("{}/eo_co_uds_table.bin", TABLE_DIR))?.write_all(&pruning_table)?;
+    write_table(&pruning_table, format!("{}/eo_co_uds_table.bin", TABLE_DIR))?;
 
     Ok(())
 }
@@ -140,13 +165,7 @@ fn gen_g1_sym_tables() -> std::io::Result<()> {
             }
         }
 
-        let co_sym_map_data = unsafe {
-            std::slice::from_raw_parts(
-                co_sym_map.as_ptr() as *const u8,
-                std::mem::size_of_val(&co_sym_map),
-            )
-        };
-        fs::File::create(format!("{}/co_sym_map.bin", TABLE_DIR))?.write_all(co_sym_map_data)?;
+        write_table(&co_sym_map, format!("{}/co_sym_map.bin", TABLE_DIR))?;
     }
     // Generate EO+UDS symmetry mapping and move table: canonicalizes combined EO/UDS coordinates
     {
@@ -200,14 +219,7 @@ fn gen_g1_sym_tables() -> std::io::Result<()> {
         }
 
         // Store the symmetry mapping for state lookup
-        let eo_uds_sym_map_data = unsafe {
-            std::slice::from_raw_parts(
-                eo_uds_sym_map.as_ptr() as *const u8,
-                std::mem::size_of_val(&eo_uds_sym_map),
-            )
-        };
-        fs::File::create(format!("{}/eo_uds_sym_map.bin", TABLE_DIR))?
-            .write_all(eo_uds_sym_map_data)?;
+        write_table(&eo_uds_sym_map, format!("{}/eo_uds_sym_map.bin", TABLE_DIR))?;
 
         // Precompute move transitions in the canonicalized state space
         let mut eo_uds_sym_move = vec![u32::MIN; 64430 * 18];
@@ -231,14 +243,10 @@ fn gen_g1_sym_tables() -> std::io::Result<()> {
         }
 
         // Save the canonicalized transition move table
-        let eo_uds_sym_move_data = unsafe {
-            std::slice::from_raw_parts(
-                eo_uds_sym_move.as_ptr() as *const u8,
-                eo_uds_sym_move.len() * std::mem::size_of::<u32>(),
-            )
-        };
-        fs::File::create(format!("{}/eo_uds_sym_move.bin", TABLE_DIR))?
-            .write_all(eo_uds_sym_move_data)?;
+        write_table(
+            &eo_uds_sym_move,
+            format!("{}/eo_uds_sym_move.bin", TABLE_DIR),
+        )?;
     }
     Ok(())
 }
@@ -302,32 +310,13 @@ fn gen_g2_tables() -> std::io::Result<()> {
     }
 
     // Save phase 2 pruning tables
-    fs::File::create(format!("{}/ep_table.bin", TABLE_DIR))?.write_all(&ep_dists)?;
-    fs::File::create(format!("{}/cp_uds_table.bin", TABLE_DIR))?.write_all(&cp_uds_dists)?;
+    write_table(&ep_dists, format!("{}/ep_table.bin", TABLE_DIR))?;
+    write_table(&cp_uds_dists, format!("{}/cp_uds_table.bin", TABLE_DIR))?;
 
     // Save phase 2 move tables
-    let cp_move_data = unsafe {
-        std::slice::from_raw_parts(
-            cp_move.as_ptr() as *const u8,
-            std::mem::size_of_val(&cp_move),
-        )
-    };
-    fs::File::create(format!("{}/cp_move.bin", TABLE_DIR))?.write_all(cp_move_data)?;
-    let ep_no_uds_move_data = unsafe {
-        std::slice::from_raw_parts(
-            ep_no_uds_move.as_ptr() as *const u8,
-            std::mem::size_of_val(&ep_no_uds_move),
-        )
-    };
-    fs::File::create(format!("{}/ep_no_uds_move.bin", TABLE_DIR))?
-        .write_all(ep_no_uds_move_data)?;
-    let ep_uds_move_data = unsafe {
-        std::slice::from_raw_parts(
-            ep_uds_move.as_ptr() as *const u8,
-            std::mem::size_of_val(&ep_uds_move),
-        )
-    };
-    fs::File::create(format!("{}/ep_uds_move.bin", TABLE_DIR))?.write_all(ep_uds_move_data)?;
+    write_table(&cp_move, format!("{}/cp_move.bin", TABLE_DIR))?;
+    write_table(&ep_no_uds_move, format!("{}/ep_no_uds_move.bin", TABLE_DIR))?;
+    write_table(&ep_uds_move, format!("{}/ep_uds_move.bin", TABLE_DIR))?;
 
     Ok(())
 }
