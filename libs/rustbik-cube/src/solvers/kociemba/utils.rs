@@ -191,6 +191,149 @@ impl KociembaCube {
         coord
     }
 
+    /// Creates a cube from an edge orientation coordinate (0-2047)
+    /// Preserves UDS edges (slots 8-11) — they stay in canonical position with orientation 0.
+    pub fn from_eo(eo: u16) -> Self {
+        let mut edges: u64 = 0;
+        let mut parity = 0;
+
+        // Reconstruct edge orientation for the first 11 edges
+        for i in 0..11 {
+            let ori = (eo >> i) & 1;
+            parity ^= ori;
+            edges |= ((ori as u64) << 4 | (i as u64)) << (i * 5);
+        }
+        // The 12th edge orientation is derived from parity to ensure the total is even
+        edges |= ((parity as u64) << 4 | 11) << (11 * 5);
+
+        Self(Cube {
+            edges,
+            corners: Cube::new().corners,
+        })
+    }
+
+    /// Creates a cube from a corner orientation coordinate (0-2186)
+    pub fn from_co(co: u16) -> Self {
+        let mut corners: u64 = 0;
+        let mut temp_co = co;
+        let mut sum_ori = 0;
+
+        // Reconstruct corner orientations for the first 7 corners
+        for i in 0..7 {
+            let ori = (temp_co % 3) as u8;
+            temp_co /= 3;
+            sum_ori += ori;
+            corners |= ((ori as u64) << 3 | (i as u64)) << (i * 5);
+        }
+        // The 8th corner orientation ensures the sum of all orientations is a multiple of 3
+        let last_ori = (3 - (sum_ori % 3)) % 3;
+        corners |= ((last_ori as u64) << 3 | 7) << (7 * 5);
+
+        let mut cube = Cube::new();
+        cube.corners = corners;
+        Self(cube)
+    }
+
+    /// Creates a cube from a UDS slice combination coordinate (0-494)
+    pub fn from_uds(uds: u16) -> Self {
+        let mut occupied = [false; 12];
+        let mut s = uds;
+        let mut k = 4;
+
+        // Convert lexicographical index back to slice edge positions using nCr
+        for n in (0..12).rev() {
+            let ncr = n_cr(n as i32, (k - 1) as i32) as u16;
+            if k > 0 && s >= ncr {
+                s -= ncr;
+            } else if k > 0 {
+                occupied[n as usize] = true;
+                k -= 1;
+                if k == 0 {
+                    break;
+                }
+            }
+        }
+
+        let mut edges: u64 = 0;
+        let slice_pieces = [8, 9, 10, 11];
+        let other_pieces = [0, 1, 2, 3, 4, 5, 6, 7];
+        let mut s_idx = 0;
+        let mut o_idx = 0;
+
+        // Populate edges based on calculated slice edge positions
+        for i in 0..12 {
+            let piece_id = if occupied[i] {
+                let id = slice_pieces[s_idx];
+                s_idx += 1;
+                id
+            } else {
+                let id = other_pieces[o_idx];
+                o_idx += 1;
+                id
+            };
+            edges |= (piece_id as u64) << (i * 5);
+        }
+
+        let mut cube = Cube::new();
+        cube.edges = edges;
+        Self(cube)
+    }
+
+    /// Creates a cube from an edge orientation coordinate (0-2047) and a UDS slice coordinate (0-494)
+    pub fn from_eo_uds(eo: u16, uds: u16) -> Self {
+        let mut occupied = [false; 12];
+        let mut s = uds;
+        let mut k = 4;
+
+        // Reconstruct UDS slice edge positions
+        for n in (0..12).rev() {
+            let ncr = n_cr(n as i32, (k - 1) as i32) as u16;
+            if k > 0 && s >= ncr {
+                s -= ncr;
+            } else if k > 0 {
+                occupied[n as usize] = true;
+                k -= 1;
+                if k == 0 {
+                    break;
+                }
+            }
+        }
+
+        let mut edges: u64 = 0;
+        let slice_pieces = [8, 9, 10, 11];
+        let other_pieces = [0, 1, 2, 3, 4, 5, 6, 7];
+        let mut s_idx = 0;
+        let mut o_idx = 0;
+
+        let mut parity = 0;
+        // Populate edges with combined orientation and slice positions
+        for i in 0..12 {
+            let piece_id = if occupied[i] {
+                let id = slice_pieces[s_idx];
+                s_idx += 1;
+                id
+            } else {
+                let id = other_pieces[o_idx];
+                o_idx += 1;
+                id
+            };
+
+            let ori = if i < 11 {
+                let o = (eo >> i) & 1;
+                parity ^= o;
+                o
+            } else {
+                parity
+            };
+
+            edges |= ((ori as u64) << 4 | (piece_id as u64)) << (i * 5);
+        }
+
+        let mut cube = Cube::new();
+        cube.edges = edges;
+        Self(cube)
+    }
+
     fn rotate_axis(
         &self,
         next_edge_pos: [u64; 12],
@@ -310,22 +453,6 @@ impl KociembaCube {
             _ => self.apply_uds_symmetry(i % 16),
         }
     }
-
-    pub fn get_canonical(&self) -> (u16, u8) {
-        let mut min_coord: u16 = self.get_uds_coord();
-        let mut best_sym = 0;
-
-        for i in 1..16 {
-            let sym_cube = self.apply_uds_symmetry(i);
-
-            let uds = sym_cube.get_uds_coord();
-            if uds < min_coord {
-                min_coord = uds;
-                best_sym = i;
-            }
-        }
-        (min_coord, best_sym)
-    }
 }
 
 /// Calculates the mathematical combination nCr
@@ -415,5 +542,67 @@ mod tests {
         assert_eq!(cube.get_eo_coord(), 0);
         // But it DOES change corner orientation
         assert!(cube.get_co_coord() != 0);
+    }
+
+    #[test]
+    fn test_from_eo_roundtrip() {
+        for eo in 0..2048 {
+            let cube = KociembaCube::from_eo(eo);
+            assert_eq!(
+                cube.get_eo_coord(),
+                eo,
+                "Failed roundtrip for EO coordinate: {}",
+                eo
+            );
+        }
+    }
+
+    #[test]
+    fn test_from_co_roundtrip() {
+        for co in 0..2187 {
+            let cube = KociembaCube::from_co(co);
+            assert_eq!(
+                cube.get_co_coord(),
+                co,
+                "Failed roundtrip for CO coordinate: {}",
+                co
+            );
+        }
+    }
+
+    #[test]
+    fn test_from_uds_roundtrip() {
+        for uds in 0..495 {
+            let cube = KociembaCube::from_uds(uds);
+            assert_eq!(
+                cube.get_uds_coord(),
+                uds,
+                "Failed roundtrip for UDS coordinate: {}",
+                uds
+            );
+        }
+    }
+
+    #[test]
+    fn test_from_eo_uds_roundtrip() {
+        for eo in 0..2048 {
+            for uds in 0..495 {
+                let cube = KociembaCube::from_eo_uds(eo, uds);
+                assert_eq!(
+                    cube.get_eo_coord(),
+                    eo,
+                    "Failed roundtrip EO in eo_uds: eo={}, uds={}",
+                    eo,
+                    uds
+                );
+                assert_eq!(
+                    cube.get_uds_coord(),
+                    uds,
+                    "Failed roundtrip UDS in eo_uds: eo={}, uds={}",
+                    eo,
+                    uds
+                );
+            }
+        }
     }
 }
