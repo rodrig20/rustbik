@@ -32,14 +32,7 @@ If the lookup tables are missing, they can be generated using the provided utili
 cargo run --bin generate_tables
 ```
 
-> **Note**: Generating all tables may take a few moments and requires approximately 100MB of disk space.
-
-## Performance Modes
-
-The solver behavior can be adjusted in `constants.rs`:
-
-- **Standard Mode**: Loads all move tables into RAM for maximum speed during search.
-- **Low-Memory Mode**: Recalculates state transitions on-the-fly. This significantly reduces RAM usage but increases the time required to find a solution.
+> **Note**: Generating all tables may take a few moments and requires approximately 2500MB of disk space.
 
 ## Implementation Details
 
