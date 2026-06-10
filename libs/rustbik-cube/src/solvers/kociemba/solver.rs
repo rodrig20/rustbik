@@ -1,10 +1,188 @@
-use std::sync::OnceLock;
-use std::time::{Duration, Instant};
-use std::{fs, usize};
-
 use super::{G1_MOVE_LIST, KociembaCube, TABLE_DIR};
 use crate::moves::{MoveAxis, Scramble, SingleMove};
 use crate::{Cube, MOVE_LIST};
+use std::sync::OnceLock;
+use std::time::{Duration, Instant};
+
+struct G1Frame {
+    state: (usize, usize, usize),
+    move_idx: usize,
+    depth: usize,
+    last_axis: Option<MoveAxis>,
+    last_last_axis: Option<MoveAxis>,
+    last_move_idx: usize,
+}
+
+pub struct G1Solver {
+    stack: Vec<G1Frame>,
+    limit: usize,
+    initial_state: (usize, usize, usize),
+}
+
+impl G1Solver {
+    pub fn new(cube: &Cube, limit: usize) -> Self {
+        let kociemba_cube = KociembaCube(*cube);
+        let state = (
+            kociemba_cube.get_eo_coord() as usize,
+            kociemba_cube.get_co_coord() as usize,
+            kociemba_cube.get_uds_pos_coord() as usize,
+        );
+
+        Self {
+            stack: vec![G1Frame {
+                state,
+                move_idx: 0,
+                depth: 0,
+                last_axis: None,
+                last_last_axis: None,
+                last_move_idx: 0,
+            }],
+            limit,
+            initial_state: state,
+        }
+    }
+
+    fn eo_co_uds_table() -> &'static [u8] {
+        static DATA: OnceLock<&'static [u8]> = OnceLock::new();
+        *DATA.get_or_init(|| super::map_file(format!("{}/eo_co_uds_table.bin", TABLE_DIR)))
+    }
+
+    fn eo_uds_sym_map() -> &'static [u32] {
+        static DATA: OnceLock<&'static [u32]> = OnceLock::new();
+        *DATA.get_or_init(|| super::map_file(format!("{}/eo_uds_sym_map.bin", TABLE_DIR)))
+    }
+
+    fn co_sym_map() -> &'static [u16] {
+        static DATA: OnceLock<&'static [u16]> = OnceLock::new();
+        *DATA.get_or_init(|| super::map_file(format!("{}/co_sym_map.bin", TABLE_DIR)))
+    }
+
+    fn eo_move() -> &'static [u16] {
+        static DATA: OnceLock<&'static [u16]> = OnceLock::new();
+        *DATA.get_or_init(|| super::map_file(format!("{}/eo_move.bin", TABLE_DIR)))
+    }
+
+    fn uds_pos_move() -> &'static [u16] {
+        static DATA: OnceLock<&'static [u16]> = OnceLock::new();
+        *DATA.get_or_init(|| super::map_file(format!("{}/uds_pos_move.bin", TABLE_DIR)))
+    }
+
+    fn co_move() -> &'static [u16] {
+        static DATA: OnceLock<&'static [u16]> = OnceLock::new();
+        *DATA.get_or_init(|| super::map_file(format!("{}/co_move.bin", TABLE_DIR)))
+    }
+
+    pub fn reset(&mut self, limit: usize) {
+        self.limit = limit;
+        self.stack.clear();
+        self.stack.push(G1Frame {
+            state: self.initial_state,
+            move_idx: 0,
+            depth: 0,
+            last_axis: None,
+            last_last_axis: None,
+            last_move_idx: 0,
+        });
+    }
+
+    #[inline(always)]
+    fn heuristic(eo: usize, co: usize, uds: usize) -> u8 {
+        let packed = Self::eo_uds_sym_map()[eo * 495 + uds];
+        let class_id = packed >> 4;
+        let sym = packed & 0xF;
+        let co_conj = Self::co_sym_map()[co * 16 + sym as usize];
+        Self::eo_co_uds_table()[(class_id as usize * 2187) + co_conj as usize]
+    }
+
+    /// Conveniece method to solve Phase 1 in up to 12 moves
+    pub fn solve(cube: &Cube) -> Option<Vec<SingleMove>> {
+        let mut solver = Self::new(cube, 0);
+        for limit in 0..=12 {
+            solver.reset(limit);
+            if let Some(path_indices) = solver.next() {
+                return Some(path_indices.iter().map(|&i| MOVE_LIST[i]).collect());
+            }
+        }
+        None
+    }
+}
+
+impl Iterator for G1Solver {
+    type Item = Vec<usize>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            let (eo, co, uds, depth, move_idx, last_axis, last_last_axis);
+
+            if let Some(frame) = self.stack.last() {
+                (eo, co, uds) = frame.state;
+                depth = frame.depth;
+                move_idx = frame.move_idx;
+                last_axis = frame.last_axis;
+                last_last_axis = frame.last_last_axis;
+            } else {
+                return None;
+            }
+
+            let h = Self::heuristic(eo, co, uds) as usize;
+
+            // Goal reached
+            if h == 0 && move_idx == 0 {
+                let path = self.stack.iter().skip(1).map(|f| f.last_move_idx).collect();
+
+                if let Some(frame) = self.stack.last_mut() {
+                    frame.move_idx = 18; // Mark as exhausted for Phase 1
+                }
+                return Some(path);
+            }
+
+            // Pruning: if current depth + estimated remaining depth > limit, backtrack
+            if depth + h > self.limit || move_idx >= 18 {
+                self.stack.pop();
+                continue;
+            }
+
+            // Try the next move
+            let current_move_idx = move_idx;
+            self.stack.last_mut().unwrap().move_idx += 1;
+
+            let mv = &MOVE_LIST[current_move_idx];
+
+            // Avoid consecutive moves on the same axis or redundant axial group moves
+            let mut skip = false;
+            if let Some(la) = last_axis {
+                if mv.axis == la {
+                    skip = true;
+                } else if let Some(lla) = last_last_axis {
+                    if mv.axis == lla && la.group() == mv.axis.group() {
+                        skip = true;
+                    }
+                }
+            }
+
+            if skip {
+                continue;
+            }
+
+            // Transition to the next state
+            let next_state = (
+                Self::eo_move()[(eo as usize * 18) + current_move_idx] as usize,
+                Self::co_move()[(co as usize * 18) + current_move_idx] as usize,
+                Self::uds_pos_move()[(uds as usize * 18) + current_move_idx] as usize,
+            );
+
+            // Push the new frame to the stack
+            self.stack.push(G1Frame {
+                state: next_state,
+                move_idx: 0,
+                depth: depth + 1,
+                last_axis: Some(mv.axis),
+                last_last_axis: last_axis,
+                last_move_idx: current_move_idx,
+            });
+        }
+    }
+}
 
 struct G2Frame {
     state: (usize, usize, usize),
@@ -18,6 +196,11 @@ struct G2Frame {
 struct G2Solver;
 
 impl G2Solver {
+    fn cp_ep_table() -> &'static [u8] {
+        static DATA: OnceLock<&'static [u8]> = OnceLock::new();
+        *DATA.get_or_init(|| super::map_file(format!("{}/cp_ep_table.bin", TABLE_DIR)))
+    }
+
     fn cp_sym_map() -> &'static [u16] {
         static DATA: OnceLock<&'static [u16]> = OnceLock::new();
         *DATA.get_or_init(|| super::map_file(format!("{}/cp_sym_map.bin", TABLE_DIR)))
@@ -27,9 +210,13 @@ impl G2Solver {
         *DATA.get_or_init(|| super::map_file(format!("{}/ep_sym_map.bin", TABLE_DIR)))
     }
 
-    fn cp_ep_table() -> &'static [u8] {
+    fn ep_move() -> &'static [u16] {
+        static DATA: OnceLock<&'static [u16]> = OnceLock::new();
+        *DATA.get_or_init(|| super::map_file(format!("{}/ep_move.bin", TABLE_DIR)))
+    }
+    fn uds_perm_move() -> &'static [u8] {
         static DATA: OnceLock<&'static [u8]> = OnceLock::new();
-        *DATA.get_or_init(|| super::map_file(format!("{}/cp_ep_table.bin", TABLE_DIR)))
+        *DATA.get_or_init(|| super::map_file(format!("{}/uds_perm_move.bin", TABLE_DIR)))
     }
 
     fn cp_move() -> &'static [u16] {
@@ -37,18 +224,8 @@ impl G2Solver {
         *DATA.get_or_init(|| super::map_file(format!("{}/cp_move.bin", TABLE_DIR)))
     }
 
-    fn ep_no_uds_move() -> &'static [u16] {
-        static DATA: OnceLock<&'static [u16]> = OnceLock::new();
-        *DATA.get_or_init(|| super::map_file(format!("{}/ep_move.bin", TABLE_DIR)))
-    }
-
-    fn slice_move() -> &'static [u8] {
-        static DATA: OnceLock<&'static [u8]> = OnceLock::new();
-        *DATA.get_or_init(|| super::map_file(format!("{}/slice_move.bin", TABLE_DIR)))
-    }
-
     #[inline(always)]
-    fn get_h(cp: usize, ep: usize) -> u8 {
+    fn heuristic(cp: usize, ep: usize) -> u8 {
         let packed = Self::cp_sym_map()[cp];
         let class_id = packed >> 4;
         let sym = (packed & 0xF) as usize;
@@ -58,13 +235,13 @@ impl G2Solver {
 
     pub fn solve(cube: &Cube, max_limit: usize) -> Option<Vec<SingleMove>> {
         let kcube = KociembaCube(*cube);
-        let (cp0, ep_no_uds0, ep_uds0) = (
+        let (cp0, ep0, ep_uds0) = (
             kcube.get_cp_coord() as usize,
-            kcube.get_ep_no_uds_coord() as usize,
-            kcube.get_ep_uds_coord() as usize,
+            kcube.get_ep_coord() as usize,
+            kcube.get_uds_perm_coord() as usize,
         );
 
-        let h0 = Self::get_h(cp0, ep_no_uds0) as usize;
+        let h0 = Self::heuristic(cp0, ep0) as usize;
 
         if h0 == 0 && ep_uds0 == 0 {
             return Some(vec![]);
@@ -78,7 +255,7 @@ impl G2Solver {
         for limit in h0..=max_limit {
             stack.clear();
             stack.push(G2Frame {
-                state: (cp0, ep_no_uds0, ep_uds0),
+                state: (cp0, ep0, ep_uds0),
                 move_idx: 0,
                 depth: 0,
                 last_axis: None,
@@ -87,17 +264,17 @@ impl G2Solver {
             });
 
             while let Some(_) = stack.last() {
-                let (cp, ep_no_uds, ep_uds, depth, move_idx, last_axis, last_last_axis);
+                let (cp, ep, ep_uds, depth, move_idx, last_axis, last_last_axis);
                 {
                     let frame = stack.last().unwrap();
-                    (cp, ep_no_uds, ep_uds) = frame.state;
+                    (cp, ep, ep_uds) = frame.state;
                     depth = frame.depth;
                     move_idx = frame.move_idx;
                     last_axis = frame.last_axis;
                     last_last_axis = frame.last_last_axis;
                 }
 
-                let h = Self::get_h(cp, ep_no_uds) as usize;
+                let h = Self::heuristic(cp, ep) as usize;
 
                 // Goal reached
                 if h == 0 && ep_uds == 0 {
@@ -137,8 +314,8 @@ impl G2Solver {
 
                 let next_state = (
                     Self::cp_move()[(cp * 10) + current_move_idx] as usize,
-                    Self::ep_no_uds_move()[(ep_no_uds * 10) + current_move_idx] as usize,
-                    Self::slice_move()[(ep_uds * 10) + current_move_idx] as usize,
+                    Self::ep_move()[(ep * 10) + current_move_idx] as usize,
+                    Self::uds_perm_move()[(ep_uds * 10) + current_move_idx] as usize,
                 );
 
                 stack.push(G2Frame {
@@ -286,184 +463,4 @@ pub fn solve_time_limit(cube: &Cube, time_limit: Duration) -> Option<Vec<SingleM
     }
 
     best
-}
-
-struct G1Frame {
-    state: (usize, usize, usize),
-    move_idx: usize,
-    depth: usize,
-    last_axis: Option<MoveAxis>,
-    last_last_axis: Option<MoveAxis>,
-    last_move_idx: usize,
-}
-
-pub struct G1Solver {
-    stack: Vec<G1Frame>,
-    limit: usize,
-    initial_state: (usize, usize, usize),
-}
-
-impl G1Solver {
-    pub fn new(cube: &Cube, limit: usize) -> Self {
-        let kociemba_cube = KociembaCube(*cube);
-        let state = (
-            kociemba_cube.get_eo_coord() as usize,
-            kociemba_cube.get_co_coord() as usize,
-            kociemba_cube.get_uds_coord() as usize,
-        );
-
-        Self {
-            stack: vec![G1Frame {
-                state,
-                move_idx: 0,
-                depth: 0,
-                last_axis: None,
-                last_last_axis: None,
-                last_move_idx: 0,
-            }],
-            limit,
-            initial_state: state,
-        }
-    }
-
-    pub fn reset(&mut self, limit: usize) {
-        self.limit = limit;
-        self.stack.clear();
-        self.stack.push(G1Frame {
-            state: self.initial_state,
-            move_idx: 0,
-            depth: 0,
-            last_axis: None,
-            last_last_axis: None,
-            last_move_idx: 0,
-        });
-    }
-
-    #[inline(always)]
-    fn get_h(eo: usize, co: usize, uds: usize) -> u8 {
-        let packed = Self::eo_uds_sym_map()[eo * 495 + uds];
-        let class_id = packed >> 4;
-        let sym = packed & 0xF;
-        let co_conj = Self::co_sym_map()[co * 16 + sym as usize];
-        Self::eo_co_uds_table()[(class_id as usize * 2187) + co_conj as usize]
-    }
-
-    fn eo_uds_sym_map() -> &'static [u32] {
-        static DATA: OnceLock<&'static [u32]> = OnceLock::new();
-        *DATA.get_or_init(|| super::map_file(format!("{}/eo_uds_sym_map.bin", TABLE_DIR)))
-    }
-
-    fn co_sym_map() -> &'static [u16] {
-        static DATA: OnceLock<&'static [u16]> = OnceLock::new();
-        *DATA.get_or_init(|| super::map_file(format!("{}/co_sym_map.bin", TABLE_DIR)))
-    }
-
-    fn eo_co_uds_table() -> &'static [u8] {
-        static DATA: OnceLock<&'static [u8]> = OnceLock::new();
-        *DATA.get_or_init(|| super::map_file(format!("{}/eo_co_uds_table.bin", TABLE_DIR)))
-    }
-
-    fn eo_move() -> &'static [u16] {
-        static DATA: OnceLock<&'static [u16]> = OnceLock::new();
-        *DATA.get_or_init(|| super::map_file(format!("{}/eo_move.bin", TABLE_DIR)))
-    }
-
-    fn co_move() -> &'static [u16] {
-        static DATA: OnceLock<&'static [u16]> = OnceLock::new();
-        *DATA.get_or_init(|| super::map_file(format!("{}/co_move.bin", TABLE_DIR)))
-    }
-
-    fn uds_move() -> &'static [u16] {
-        static DATA: OnceLock<&'static [u16]> = OnceLock::new();
-        *DATA.get_or_init(|| super::map_file(format!("{}/uds_move.bin", TABLE_DIR)))
-    }
-
-    /// Conveniece method to solve Phase 1 in up to 12 moves
-    pub fn solve(cube: &Cube) -> Option<Vec<SingleMove>> {
-        let mut solver = Self::new(cube, 0);
-        for limit in 0..=12 {
-            solver.reset(limit);
-            if let Some(path_indices) = solver.next() {
-                return Some(path_indices.iter().map(|&i| MOVE_LIST[i]).collect());
-            }
-        }
-        None
-    }
-}
-
-impl Iterator for G1Solver {
-    type Item = Vec<usize>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            let (eo, co, uds, depth, move_idx, last_axis, last_last_axis);
-
-            if let Some(frame) = self.stack.last() {
-                (eo, co, uds) = frame.state;
-                depth = frame.depth;
-                move_idx = frame.move_idx;
-                last_axis = frame.last_axis;
-                last_last_axis = frame.last_last_axis;
-            } else {
-                return None;
-            }
-
-            let h = Self::get_h(eo, co, uds) as usize;
-
-            // Goal reached
-            if h == 0 && move_idx == 0 {
-                let path = self.stack.iter().skip(1).map(|f| f.last_move_idx).collect();
-
-                if let Some(frame) = self.stack.last_mut() {
-                    frame.move_idx = 18; // Mark as exhausted for Phase 1
-                }
-                return Some(path);
-            }
-
-            // Pruning: if current depth + estimated remaining depth > limit, backtrack
-            if depth + h > self.limit || move_idx >= 18 {
-                self.stack.pop();
-                continue;
-            }
-
-            // Try the next move
-            let current_move_idx = move_idx;
-            self.stack.last_mut().unwrap().move_idx += 1;
-
-            let mv = &MOVE_LIST[current_move_idx];
-
-            // Avoid consecutive moves on the same axis or redundant axial group moves
-            let mut skip = false;
-            if let Some(la) = last_axis {
-                if mv.axis == la {
-                    skip = true;
-                } else if let Some(lla) = last_last_axis {
-                    if mv.axis == lla && la.group() == mv.axis.group() {
-                        skip = true;
-                    }
-                }
-            }
-
-            if skip {
-                continue;
-            }
-
-            // Transition to the next state
-            let next_state = (
-                Self::eo_move()[(eo as usize * 18) + current_move_idx] as usize,
-                Self::co_move()[(co as usize * 18) + current_move_idx] as usize,
-                Self::uds_move()[(uds as usize * 18) + current_move_idx] as usize,
-            );
-
-            // Push the new frame to the stack
-            self.stack.push(G1Frame {
-                state: next_state,
-                move_idx: 0,
-                depth: depth + 1,
-                last_axis: Some(mv.axis),
-                last_last_axis: last_axis,
-                last_move_idx: current_move_idx,
-            });
-        }
-    }
 }

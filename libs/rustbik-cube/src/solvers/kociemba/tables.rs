@@ -1,13 +1,9 @@
-use bytemuck::cast_slice;
-use std::collections::{HashMap, VecDeque};
-use std::fs;
-use std::io::Write;
-use std::path::Path;
-
 use bytemuck::{Pod, Zeroable};
 use memmap2::Mmap;
-use std::fs::File;
-use std::io::{BufWriter, Result};
+use std::collections::{HashMap, VecDeque};
+use std::fs;
+use std::io::{BufWriter, Result, Write};
+use std::path::Path;
 
 use super::{G1_MOVE_LIST, KociembaCube, TABLE_DIR};
 use crate::MOVE_LIST;
@@ -17,7 +13,7 @@ pub(crate) fn write_table<T>(data: &[T], path: impl AsRef<Path>) -> Result<()>
 where
     T: Pod + Zeroable,
 {
-    let file = File::create(path)?;
+    let file = fs::File::create(path)?;
     let mut writer = BufWriter::new(file);
 
     let bytes = bytemuck::cast_slice(data);
@@ -29,7 +25,7 @@ where
 
 /// Memory-maps a file and returns a static reference to the data
 pub fn map_file<T: Pod + Zeroable>(path: String) -> &'static [T] {
-    let file = File::open(&path).expect("Failed to open file");
+    let file = fs::File::open(&path).expect("Failed to open file");
 
     let mmap = unsafe { Mmap::map(&file).expect("Failed to map file") };
 
@@ -69,7 +65,7 @@ fn check_g1_tables() -> bool {
     Path::new(&format!("{}/eo_co_uds_table.bin", TABLE_DIR)).exists()
         && Path::new(&format!("{}/eo_move.bin", TABLE_DIR)).exists()
         && Path::new(&format!("{}/co_move.bin", TABLE_DIR)).exists()
-        && Path::new(&format!("{}/uds_move.bin", TABLE_DIR)).exists()
+        && Path::new(&format!("{}/uds_pos_move.bin", TABLE_DIR)).exists()
 }
 
 /// Checks if all necessary G2 lookup tables exist
@@ -77,9 +73,111 @@ fn check_g2_tables() -> bool {
     Path::new(&format!("{}/cp_ep_table.bin", TABLE_DIR)).exists()
         && Path::new(&format!("{}/cp_move.bin", TABLE_DIR)).exists()
         && Path::new(&format!("{}/ep_move.bin", TABLE_DIR)).exists()
-        && Path::new(&format!("{}/slice_move.bin", TABLE_DIR)).exists()
+        && Path::new(&format!("{}/uds_perm_move.bin", TABLE_DIR)).exists()
         && Path::new(&format!("{}/ep_sym_map.bin", TABLE_DIR)).exists()
         && Path::new(&format!("{}/cp_sym_map.bin", TABLE_DIR)).exists()
+}
+
+fn gen_g1_sym_tables() -> std::io::Result<()> {
+    if !Path::new(TABLE_DIR).exists() {
+        fs::create_dir_all(TABLE_DIR)?;
+    }
+    // Generate CO symmetry map: relates corner orientation to their transformed states under 16 symmetries
+    {
+        let mut co_sym_map = [0; 2187 * 16];
+        for co in 0..2187u16 {
+            let cube = KociembaCube::from_co(co as u16);
+            for sym in 0..16 {
+                let sym_cube = cube.apply_uds_symmetry(sym);
+
+                co_sym_map[(co * 16 + sym as u16) as usize] = sym_cube.get_co_coord();
+            }
+        }
+
+        write_table(&co_sym_map, format!("{}/co_sym_map.bin", TABLE_DIR))?;
+    }
+    // Generate EO+UDS symmetry mapping and move table: canonicalizes combined EO/UDS coordinates
+    {
+        let mut eo_uds_sym_map = [u32::MIN; 2048 * 495];
+        let mut raw_to_compact_eo_uds: HashMap<(u16, u16), u32> = HashMap::new();
+        let mut id_to_example_eo_uds = [(u16::MIN, u16::MIN); 64430];
+
+        let mut next_id: u32 = 0;
+        // Iterate through all possible EO and UDS states
+        for eo in 0..2048 {
+            for uds in 0..495 {
+                let cube = KociembaCube::from_eo_uds(eo, uds);
+
+                // Identify canonical representative using 16 symmetries and map to compressed state
+                let mut canon_coords = (cube.get_eo_coord(), cube.get_uds_pos_coord());
+                let mut canon_sym = 0;
+
+                // Find the lexicographically smallest (EO, UDS) state among all 16 symmetries
+                for i in 1..16 {
+                    let sym_cube = cube.apply_uds_symmetry(i);
+
+                    let sym_eo = sym_cube.get_eo_coord();
+
+                    if sym_eo < canon_coords.0 {
+                        let sym_uds = sym_cube.get_uds_pos_coord();
+                        canon_coords = (sym_eo, sym_uds);
+                        canon_sym = i;
+                    } else if sym_eo == canon_coords.0 {
+                        let sym_uds = sym_cube.get_uds_pos_coord();
+                        if sym_uds < canon_coords.1 {
+                            canon_coords = (sym_eo, sym_uds);
+                            canon_sym = i;
+                        }
+                    }
+                }
+
+                // Assign or retrieve a unique ID for the canonical state
+                if let Some(id) = raw_to_compact_eo_uds.get(&canon_coords) {
+                    eo_uds_sym_map[(eo as usize) * 495 + uds as usize] =
+                        (id << 4) | canon_sym as u32;
+                } else {
+                    raw_to_compact_eo_uds.insert(canon_coords, next_id);
+                    id_to_example_eo_uds[next_id as usize] = canon_coords;
+
+                    eo_uds_sym_map[(eo as usize) * 495 + uds as usize] =
+                        (next_id << 4) | canon_sym as u32;
+
+                    next_id += 1;
+                }
+            }
+        }
+
+        // Store the symmetry mapping for state lookup
+        write_table(&eo_uds_sym_map, format!("{}/eo_uds_sym_map.bin", TABLE_DIR))?;
+
+        // Precompute move transitions in the canonicalized state space
+        let mut eo_uds_sym_move = vec![u32::MIN; 64430 * 18];
+
+        // Calculate the next canonical state for every possible move from each canonical representative
+        for (canon_id, (eo, uds)) in id_to_example_eo_uds.iter().enumerate() {
+            let cube = KociembaCube::from_eo_uds(*eo, *uds);
+
+            for (i, mv) in MOVE_LIST.iter().enumerate() {
+                let mut n_cube = cube.clone();
+                n_cube.turn(&mv);
+
+                let n_eo = n_cube.get_eo_coord() as usize;
+                let n_uds = n_cube.get_uds_pos_coord() as usize;
+
+                // Lookup the canonical state for the result of this move
+                let n_canon = eo_uds_sym_map[(n_eo as usize) * 495 + n_uds as usize];
+
+                eo_uds_sym_move[canon_id * 18 + i] = n_canon
+            }
+        }
+
+        // Save the canonicalized transition move table
+        write_table(
+            &eo_uds_sym_move,
+            format!("{}/eo_uds_sym_move.bin", TABLE_DIR),
+        )?;
+    }
+    Ok(())
 }
 
 /// Generates Phase 1 (G0 to G1) lookup tables.
@@ -95,7 +193,7 @@ fn gen_g1_tables() -> std::io::Result<()> {
 
     let mut eo_move = [0u16; 2048 * 18];
     let mut co_move = [0u16; 2187 * 18];
-    let mut uds_move = [0u16; 495 * 18];
+    let mut uds_pos_move = [0u16; 495 * 18];
     // Precompute transition move tables for EO, CO, and UDS coordinates
     // These tables allow the solver to quickly determine the next state for any of the 18 moves.
     for eo in 0..2048 {
@@ -116,19 +214,19 @@ fn gen_g1_tables() -> std::io::Result<()> {
         }
     }
 
-    for uds in 0..495 {
-        let cube = KociembaCube::from_uds_ori(uds as u16);
+    for uds_pos in 0..495 {
+        let cube = KociembaCube::from_uds_pos(uds_pos as u16);
         for (m, mv) in MOVE_LIST.iter().enumerate() {
             let mut next = cube.clone();
             next.turn(mv); // Apply rotation
-            uds_move[(uds as usize) * 18 + m as usize] = next.get_uds_coord(); // Store new coordinate
+            uds_pos_move[(uds_pos as usize) * 18 + m as usize] = next.get_uds_pos_coord(); // Store new coordinate
         }
     }
 
     // Save transition move tables
     write_table(&eo_move, format!("{}/eo_move.bin", TABLE_DIR))?;
     write_table(&co_move, format!("{}/co_move.bin", TABLE_DIR))?;
-    write_table(&uds_move, format!("{}/uds_move.bin", TABLE_DIR))?;
+    write_table(&uds_pos_move, format!("{}/uds_pos_move.bin", TABLE_DIR))?;
 
     let co_sym_map: &[u16] = map_file(format!("{}/co_sym_map.bin", TABLE_DIR));
     let eo_uds_sym_move: &[u32] = map_file(format!("{}/eo_uds_sym_move.bin", TABLE_DIR));
@@ -179,195 +277,6 @@ fn gen_g1_tables() -> std::io::Result<()> {
     Ok(())
 }
 
-fn gen_g1_sym_tables() -> std::io::Result<()> {
-    if !Path::new(TABLE_DIR).exists() {
-        fs::create_dir_all(TABLE_DIR)?;
-    }
-    // Generate CO symmetry map: relates corner orientation to their transformed states under 16 symmetries
-    {
-        let mut co_sym_map = [0; 2187 * 16];
-        for co in 0..2187u16 {
-            let cube = KociembaCube::from_co(co as u16);
-            for sym in 0..16 {
-                let sym_cube = cube.apply_uds_symmetry(sym);
-
-                co_sym_map[(co * 16 + sym as u16) as usize] = sym_cube.get_co_coord();
-            }
-        }
-
-        write_table(&co_sym_map, format!("{}/co_sym_map.bin", TABLE_DIR))?;
-    }
-    // Generate EO+UDS symmetry mapping and move table: canonicalizes combined EO/UDS coordinates
-    {
-        let mut eo_uds_sym_map = [u32::MIN; 2048 * 495];
-        let mut raw_to_compact_eo_uds: HashMap<(u16, u16), u32> = HashMap::new();
-        let mut id_to_example_eo_uds = [(u16::MIN, u16::MIN); 64430];
-
-        let mut next_id: u32 = 0;
-        // Iterate through all possible EO and UDS states
-        for eo in 0..2048 {
-            for uds in 0..495 {
-                let cube = KociembaCube::from_eo_uds(eo, uds);
-
-                // Identify canonical representative using 16 symmetries and map to compressed state
-                let mut canon_coords = (cube.get_eo_coord(), cube.get_uds_coord());
-                let mut canon_sym = 0;
-
-                // Find the lexicographically smallest (EO, UDS) state among all 16 symmetries
-                for i in 1..16 {
-                    let sym_cube = cube.apply_uds_symmetry(i);
-
-                    let sym_eo = sym_cube.get_eo_coord();
-
-                    if sym_eo < canon_coords.0 {
-                        let sym_uds = sym_cube.get_uds_coord();
-                        canon_coords = (sym_eo, sym_uds);
-                        canon_sym = i;
-                    } else if sym_eo == canon_coords.0 {
-                        let sym_uds = sym_cube.get_uds_coord();
-                        if sym_uds < canon_coords.1 {
-                            canon_coords = (sym_eo, sym_uds);
-                            canon_sym = i;
-                        }
-                    }
-                }
-
-                // Assign or retrieve a unique ID for the canonical state
-                if let Some(id) = raw_to_compact_eo_uds.get(&canon_coords) {
-                    eo_uds_sym_map[(eo as usize) * 495 + uds as usize] =
-                        (id << 4) | canon_sym as u32;
-                } else {
-                    raw_to_compact_eo_uds.insert(canon_coords, next_id);
-                    id_to_example_eo_uds[next_id as usize] = canon_coords;
-
-                    eo_uds_sym_map[(eo as usize) * 495 + uds as usize] =
-                        (next_id << 4) | canon_sym as u32;
-
-                    next_id += 1;
-                }
-            }
-        }
-
-        // Store the symmetry mapping for state lookup
-        write_table(&eo_uds_sym_map, format!("{}/eo_uds_sym_map.bin", TABLE_DIR))?;
-
-        // Precompute move transitions in the canonicalized state space
-        let mut eo_uds_sym_move = vec![u32::MIN; 64430 * 18];
-
-        // Calculate the next canonical state for every possible move from each canonical representative
-        for (canon_id, (eo, uds)) in id_to_example_eo_uds.iter().enumerate() {
-            let cube = KociembaCube::from_eo_uds(*eo, *uds);
-
-            for (i, mv) in MOVE_LIST.iter().enumerate() {
-                let mut n_cube = cube.clone();
-                n_cube.turn(&mv);
-
-                let n_eo = n_cube.get_eo_coord() as usize;
-                let n_uds = n_cube.get_uds_coord() as usize;
-
-                // Lookup the canonical state for the result of this move
-                let n_canon = eo_uds_sym_map[(n_eo as usize) * 495 + n_uds as usize];
-
-                eo_uds_sym_move[canon_id * 18 + i] = n_canon
-            }
-        }
-
-        // Save the canonicalized transition move table
-        write_table(
-            &eo_uds_sym_move,
-            format!("{}/eo_uds_sym_move.bin", TABLE_DIR),
-        )?;
-    }
-    Ok(())
-}
-
-/// Generates phase 2 (G1 to solved) lookup tables using BFS
-/// This phase only uses the 10 moves allowed in the G1 group:
-/// U, U', U2, D, D', D2, F2, B2, R2, L2
-fn gen_g2_tables() -> std::io::Result<()> {
-    if !Path::new(TABLE_DIR).exists() {
-        fs::create_dir_all(TABLE_DIR)?;
-    }
-    // Precompute transition move tables for CP, EO, and Slice coordinates
-    // These tables allow the solver to quickly determine the next state for any of the 10 moves.
-    let mut cp_move = [0u16; 40320 * 10];
-    for cp in 0..40320 {
-        let cube = KociembaCube::from_cp(cp as u16);
-        for (m, mv) in G1_MOVE_LIST.iter().enumerate() {
-            let mut next = cube.clone();
-            next.turn(mv);
-            cp_move[(cp as usize * 10) + m] = next.get_cp_coord();
-        }
-    }
-
-    let mut ep_move = [0u16; 40320 * 10];
-    for ep in 0..40320 {
-        let cube = KociembaCube::from_ep_no_uds(ep as u16);
-        for (m, mv) in G1_MOVE_LIST.iter().enumerate() {
-            let mut next = cube.clone();
-            next.turn(mv);
-            ep_move[(ep as usize * 10) + m] = next.get_ep_no_uds_coord();
-        }
-    }
-
-    let mut slice_move = [0u8; 24 * 10];
-    for slice in 0..24 {
-        let cube = KociembaCube::from_uds_perm(slice as u16);
-        for (m, mv) in G1_MOVE_LIST.iter().enumerate() {
-            let mut next = cube.clone();
-            next.turn(mv);
-            slice_move[(slice as usize * 10) + m] = next.get_ep_uds_coord() as u8;
-        }
-    }
-    write_table(&cp_move, format!("{}/cp_move.bin", TABLE_DIR))?;
-    write_table(&ep_move, format!("{}/ep_move.bin", TABLE_DIR))?;
-    write_table(&slice_move, format!("{}/slice_move.bin", TABLE_DIR))?;
-
-    let ep_sym_map: &[u16] = map_file(format!("{}/ep_sym_map.bin", TABLE_DIR));
-    let cp_sym_move: &[u16] = map_file(format!("{}/cp_sym_move.bin", TABLE_DIR));
-
-    // Pruning table with 2768 canonical corner classes crossed with 40320 edge states
-    let mut pruning_table: Box<[u8]> = vec![255u8; 2768 * 40320].into_boxed_slice();
-    pruning_table[0] = 0; // The solved state
-
-    // Stores the current corner symmetry class (CP) and raw edge coordinates (EP)
-    let mut queue = VecDeque::from([(0u16, 0u16)]);
-
-    // Explore the state space with BFS layer-by-layer to find shortest paths
-    while let Some((curr_class, curr_ep)) = queue.pop_front() {
-        let curr_class_offset = curr_class as usize * 10;
-        let curr_ep_offset = curr_ep as usize * 10;
-
-        let curr_idx = (curr_class as usize * 40320) + curr_ep as usize;
-        let curr_dist = pruning_table[curr_idx];
-
-        // Phase 2 is restricted to 10 allowed moves
-        for i in 0..10 {
-            // Determine the next corner class and symmetry transformation
-            let packed_move = cp_sym_move[curr_class_offset + i];
-            let next_class = packed_move >> 4;
-            let sym = (packed_move & 0xF) as usize;
-
-            // Apply move to edges and align perspective with the new symmetry
-            let raw_next_ep = ep_move[curr_ep_offset + i] as usize;
-            let next_ep = ep_sym_map[raw_next_ep * 16 + sym];
-
-            let next_idx = (next_class as usize * 40320) + next_ep as usize;
-
-            // Mark unvisited states and queue for further exploration
-            if pruning_table[next_idx] == 255 {
-                pruning_table[next_idx] = curr_dist + 1;
-                queue.push_back((next_class, next_ep));
-            }
-        }
-    }
-
-    // Save to disk
-    write_table(&pruning_table, format!("{}/cp_ep_table.bin", TABLE_DIR))?;
-
-    Ok(())
-}
-
 fn gen_g2_sym_tables() -> std::io::Result<()> {
     if !Path::new(TABLE_DIR).exists() {
         fs::create_dir_all(TABLE_DIR)?;
@@ -378,10 +287,10 @@ fn gen_g2_sym_tables() -> std::io::Result<()> {
     {
         let mut ep_sym_map = vec![0u16; 40320 * 16];
         for ep in 0..40320 {
-            let cube = KociembaCube::from_ep_no_uds(ep as u16);
+            let cube = KociembaCube::from_ep(ep as u16);
             for sym in 0..16 {
                 let sym_cube = cube.apply_uds_symmetry(sym as u8);
-                ep_sym_map[(ep as usize * 16) + sym] = sym_cube.get_ep_no_uds_coord();
+                ep_sym_map[(ep as usize * 16) + sym] = sym_cube.get_ep_coord();
             }
         }
         write_table(&ep_sym_map, format!("{}/ep_sym_map.bin", TABLE_DIR))?;
@@ -449,6 +358,94 @@ fn gen_g2_sym_tables() -> std::io::Result<()> {
 
     Ok(())
 }
+
+/// Generates phase 2 (G1 to solved) lookup tables using BFS
+/// This phase only uses the 10 moves allowed in the G1 group:
+/// U, U', U2, D, D', D2, F2, B2, R2, L2
+fn gen_g2_tables() -> std::io::Result<()> {
+    if !Path::new(TABLE_DIR).exists() {
+        fs::create_dir_all(TABLE_DIR)?;
+    }
+    // Precompute transition move tables for CP, EO, and Slice coordinates
+    // These tables allow the solver to quickly determine the next state for any of the 10 moves.
+    let mut cp_move = [0u16; 40320 * 10];
+    for cp in 0..40320 {
+        let cube = KociembaCube::from_cp(cp as u16);
+        for (m, mv) in G1_MOVE_LIST.iter().enumerate() {
+            let mut next = cube.clone();
+            next.turn(mv);
+            cp_move[(cp as usize * 10) + m] = next.get_cp_coord();
+        }
+    }
+
+    let mut ep_move = [0u16; 40320 * 10];
+    for ep in 0..40320 {
+        let cube = KociembaCube::from_ep(ep as u16);
+        for (m, mv) in G1_MOVE_LIST.iter().enumerate() {
+            let mut next = cube.clone();
+            next.turn(mv);
+            ep_move[(ep as usize * 10) + m] = next.get_ep_coord();
+        }
+    }
+
+    let mut uds_perm = [0u8; 24 * 10];
+    for slice in 0..24 {
+        let cube = KociembaCube::from_uds_perm(slice as u16);
+        for (m, mv) in G1_MOVE_LIST.iter().enumerate() {
+            let mut next = cube.clone();
+            next.turn(mv);
+            uds_perm[(slice as usize * 10) + m] = next.get_uds_perm_coord() as u8;
+        }
+    }
+    write_table(&cp_move, format!("{}/cp_move.bin", TABLE_DIR))?;
+    write_table(&ep_move, format!("{}/ep_move.bin", TABLE_DIR))?;
+    write_table(&uds_perm, format!("{}/uds_perm_move.bin", TABLE_DIR))?;
+
+    let ep_sym_map: &[u16] = map_file(format!("{}/ep_sym_map.bin", TABLE_DIR));
+    let cp_sym_move: &[u16] = map_file(format!("{}/cp_sym_move.bin", TABLE_DIR));
+
+    // Pruning table with 2768 canonical corner classes crossed with 40320 edge states
+    let mut pruning_table: Box<[u8]> = vec![255u8; 2768 * 40320].into_boxed_slice();
+    pruning_table[0] = 0; // The solved state
+
+    // Stores the current corner symmetry class (CP) and raw edge coordinates (EP)
+    let mut queue = VecDeque::from([(0u16, 0u16)]);
+
+    // Explore the state space with BFS layer-by-layer to find shortest paths
+    while let Some((curr_class, curr_ep)) = queue.pop_front() {
+        let curr_class_offset = curr_class as usize * 10;
+        let curr_ep_offset = curr_ep as usize * 10;
+
+        let curr_idx = (curr_class as usize * 40320) + curr_ep as usize;
+        let curr_dist = pruning_table[curr_idx];
+
+        // Phase 2 is restricted to 10 allowed moves
+        for i in 0..10 {
+            // Determine the next corner class and symmetry transformation
+            let packed_move = cp_sym_move[curr_class_offset + i];
+            let next_class = packed_move >> 4;
+            let sym = (packed_move & 0xF) as usize;
+
+            // Apply move to edges and align perspective with the new symmetry
+            let raw_next_ep = ep_move[curr_ep_offset + i] as usize;
+            let next_ep = ep_sym_map[raw_next_ep * 16 + sym];
+
+            let next_idx = (next_class as usize * 40320) + next_ep as usize;
+
+            // Mark unvisited states and queue for further exploration
+            if pruning_table[next_idx] == 255 {
+                pruning_table[next_idx] = curr_dist + 1;
+                queue.push_back((next_class, next_ep));
+            }
+        }
+    }
+
+    // Save to disk
+    write_table(&pruning_table, format!("{}/cp_ep_table.bin", TABLE_DIR))?;
+
+    Ok(())
+}
+
 /// Ensures all Kociemba lookup tables are present, generating them if necessary
 pub fn gen_tables() -> std::io::Result<()> {
     gen_g1_sym_tables()?;

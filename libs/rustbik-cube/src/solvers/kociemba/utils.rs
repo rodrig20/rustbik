@@ -54,84 +54,8 @@ impl KociembaCube {
         coord
     }
 
-    #[allow(dead_code)]
-    /// Calculates the full edge permutation coordinate using Lehmer code
-    pub fn get_ep_coord(&self) -> u32 {
-        let mut coord: u32 = 0;
-
-        // Calculates a unique rank for the 12-edge permutation using Lehmer code
-        // (Factorial Number System)
-        for i in (1..12).rev() {
-            let mut sum: u32 = 0;
-            let i_edge_id = ((self.edges() >> (i * 5)) & 0b1111) as u32;
-
-            for j in (0..i).rev() {
-                let j_edge_id = ((self.edges() >> (j * 5)) & 0b1111) as u32;
-                if j_edge_id > i_edge_id {
-                    sum += 1;
-                }
-            }
-            coord = (coord + sum) * (i as u32);
-        }
-        coord
-    }
-
-    /// Calculates the permutation coordinate for the 8 outer edges
-    pub fn get_ep_no_uds_coord(&self) -> u16 {
-        let mut perm = [0u8; 8];
-        let mut count = 0;
-
-        // Collect only the 8 edges not in the UDS slice
-        for i in 0..12 {
-            let id = ((self.edges() >> (i * 5)) & 0x0F) as u8;
-            if id < 8 {
-                perm[count] = id;
-                count += 1;
-            }
-        }
-        // Apply Lehmer code on normalized IDs (0-7) to get rank
-        let mut coord: u16 = 0;
-        for i in (1..8).rev() {
-            let mut sum: u16 = 0;
-            for j in (0..i).rev() {
-                if perm[j] > perm[i] {
-                    sum += 1;
-                }
-            }
-            coord = (coord + sum) * (i as u16);
-        }
-        coord
-    }
-
-    /// Calculates the permutation coordinate for the 4 slice edges
-    pub fn get_ep_uds_coord(&self) -> u16 {
-        let mut perm = [0u8; 4];
-        let mut count = 0;
-
-        // Collect only the 4 slice edges and normalize (8-11 -> 0-3)
-        for i in 0..12 {
-            let id = ((self.edges() >> (i * 5)) & 0x0F) as u8;
-            if id >= 8 {
-                perm[count] = id - 8;
-                count += 1;
-            }
-        }
-        // Lehmer code on normalized IDs (0-3) to uniquely identify permutation
-        let mut coord: u16 = 0;
-        for i in (1..4).rev() {
-            let mut sum: u16 = 0;
-            for j in (0..i).rev() {
-                if perm[j] > perm[i] {
-                    sum += 1;
-                }
-            }
-            coord = (coord + sum) * (i as u16);
-        }
-        coord
-    }
-
     /// Calculates the UDS slice combination coordinate (0-494)
-    pub fn get_uds_coord(&self) -> u16 {
+    pub fn get_uds_pos_coord(&self) -> u16 {
         let slice_ids = [8, 9, 10, 11];
         let mut occupied = [false; 12];
 
@@ -167,6 +91,60 @@ impl KociembaCube {
             let ori = (self.corners() >> (i * 5 + 3)) & 0b11;
             coord += ori as u16 * multiplier;
             multiplier *= 3;
+        }
+        coord
+    }
+
+    /// Calculates the permutation coordinate for the 8 outer edges
+    pub fn get_ep_coord(&self) -> u16 {
+        let mut perm = [0u8; 8];
+        let mut count = 0;
+
+        // Collect only the 8 edges not in the UDS slice
+        for i in 0..12 {
+            let id = ((self.edges() >> (i * 5)) & 0x0F) as u8;
+            if id < 8 {
+                perm[count] = id;
+                count += 1;
+            }
+        }
+        // Apply Lehmer code on normalized IDs (0-7) to get rank
+        let mut coord: u16 = 0;
+        for i in (1..8).rev() {
+            let mut sum: u16 = 0;
+            for j in (0..i).rev() {
+                if perm[j] > perm[i] {
+                    sum += 1;
+                }
+            }
+            coord = (coord + sum) * (i as u16);
+        }
+        coord
+    }
+
+    /// Calculates the permutation coordinate for the 4 slice edges
+    pub fn get_uds_perm_coord(&self) -> u16 {
+        let mut perm = [0u8; 4];
+        let mut count = 0;
+
+        // Collect only the 4 slice edges and normalize (8-11 -> 0-3)
+        for i in 0..12 {
+            let id = ((self.edges() >> (i * 5)) & 0x0F) as u8;
+            if id >= 8 {
+                perm[count] = id - 8;
+                count += 1;
+            }
+        }
+        // Lehmer code on normalized IDs (0-3) to uniquely identify permutation
+        let mut coord: u16 = 0;
+        for i in (1..4).rev() {
+            let mut sum: u16 = 0;
+            for j in (0..i).rev() {
+                if perm[j] > perm[i] {
+                    sum += 1;
+                }
+            }
+            coord = (coord + sum) * (i as u16);
         }
         coord
     }
@@ -210,85 +188,6 @@ impl KociembaCube {
             edges,
             corners: Cube::new().corners,
         })
-    }
-
-    /// Creates a cube from a corner orientation coordinate (0-2186)
-    pub fn from_co(co: u16) -> Self {
-        const CORNER_MASK: u8 = 0b01011010;
-        let mut corners: u64 = 0;
-        let mut temp_co = co;
-        let mut sum_ori = 0;
-
-        // Reconstruct corner orientations for the first 7 corners
-        for i in (0..7).rev() {
-            let ori = (temp_co % 3) as u8;
-            temp_co /= 3;
-
-            let real_ori = if (CORNER_MASK >> i) & 1 == 1 {
-                match ori {
-                    1 => 2,   
-                    2 => 1,   
-                    _ => ori 
-                }
-            } else {
-                ori
-            };
-            sum_ori += real_ori;
-            corners |= ((ori as u64) << 3 | (i as u64)) << (i * 5);
-        }
-
-        // The 8th corner orientation ensures the sum of all orientations is a multiple of 3
-        let last_ori = (3 - (sum_ori % 3)) % 3;
-        corners |= ((last_ori as u64) << 3 | 7) << (7 * 5);
-
-        let mut cube = Cube::new();
-        cube.corners = corners;
-        Self(cube)
-    }
-
-    /// Creates a cube from a UDS slice combination coordinate (0-494)
-    pub fn from_uds_ori(uds: u16) -> Self {
-        let mut occupied = [false; 12];
-        let mut s = uds;
-        let mut k = 4;
-
-        // Convert lexicographical index back to slice edge positions using nCr
-        for n in (0..12).rev() {
-            let ncr = n_cr(n as i32, (k - 1) as i32) as u16;
-            if k > 0 && s >= ncr {
-                s -= ncr;
-            } else if k > 0 {
-                occupied[n as usize] = true;
-                k -= 1;
-                if k == 0 {
-                    break;
-                }
-            }
-        }
-
-        let mut edges: u64 = 0;
-        let slice_pieces = [8, 9, 10, 11];
-        let other_pieces = [0, 1, 2, 3, 4, 5, 6, 7];
-        let mut s_idx = 0;
-        let mut o_idx = 0;
-
-        // Populate edges based on calculated slice edge positions
-        for i in 0..12 {
-            let piece_id = if occupied[i] {
-                let id = slice_pieces[s_idx];
-                s_idx += 1;
-                id
-            } else {
-                let id = other_pieces[o_idx];
-                o_idx += 1;
-                id
-            };
-            edges |= (piece_id as u64) << (i * 5);
-        }
-
-        let mut cube = Cube::new();
-        cube.edges = edges;
-        Self(cube)
     }
 
     /// Creates a cube from an edge orientation coordinate (0-2047) and a UDS slice coordinate (0-494)
@@ -346,8 +245,87 @@ impl KociembaCube {
         Self(cube)
     }
 
+    /// Creates a cube from a UDS slice combination coordinate (0-494)
+    pub fn from_uds_pos(uds: u16) -> Self {
+        let mut occupied = [false; 12];
+        let mut s = uds;
+        let mut k = 4;
+
+        // Convert lexicographical index back to slice edge positions using nCr
+        for n in (0..12).rev() {
+            let ncr = n_cr(n as i32, (k - 1) as i32) as u16;
+            if k > 0 && s >= ncr {
+                s -= ncr;
+            } else if k > 0 {
+                occupied[n as usize] = true;
+                k -= 1;
+                if k == 0 {
+                    break;
+                }
+            }
+        }
+
+        let mut edges: u64 = 0;
+        let slice_pieces = [8, 9, 10, 11];
+        let other_pieces = [0, 1, 2, 3, 4, 5, 6, 7];
+        let mut s_idx = 0;
+        let mut o_idx = 0;
+
+        // Populate edges based on calculated slice edge positions
+        for i in 0..12 {
+            let piece_id = if occupied[i] {
+                let id = slice_pieces[s_idx];
+                s_idx += 1;
+                id
+            } else {
+                let id = other_pieces[o_idx];
+                o_idx += 1;
+                id
+            };
+            edges |= (piece_id as u64) << (i * 5);
+        }
+
+        let mut cube = Cube::new();
+        cube.edges = edges;
+        Self(cube)
+    }
+
+    /// Creates a cube from a corner orientation coordinate (0-2186)
+    pub fn from_co(co: u16) -> Self {
+        const CORNER_MASK: u8 = 0b01011010;
+        let mut corners: u64 = 0;
+        let mut temp_co = co;
+        let mut sum_ori = 0;
+
+        // Reconstruct corner orientations for the first 7 corners
+        for i in (0..7).rev() {
+            let ori = (temp_co % 3) as u8;
+            temp_co /= 3;
+
+            let real_ori = if (CORNER_MASK >> i) & 1 == 1 {
+                match ori {
+                    1 => 2,
+                    2 => 1,
+                    _ => ori,
+                }
+            } else {
+                ori
+            };
+            sum_ori += real_ori;
+            corners |= ((ori as u64) << 3 | (i as u64)) << (i * 5);
+        }
+
+        // The 8th corner orientation ensures the sum of all orientations is a multiple of 3
+        let last_ori = (3 - (sum_ori % 3)) % 3;
+        corners |= ((last_ori as u64) << 3 | 7) << (7 * 5);
+
+        let mut cube = Cube::new();
+        cube.corners = corners;
+        Self(cube)
+    }
+
     /// Creates a cube from a permutation coordinate of the 8 non-slice edges (0-40319)
-    pub fn from_ep_no_uds(ep: u16) -> Self {
+    pub fn from_ep(ep: u16) -> Self {
         let mut sums = [0u8; 8];
         let mut temp = ep;
         for i in 1..8 {
@@ -381,72 +359,6 @@ impl KociembaCube {
         Self(Cube {
             edges,
             corners: Cube::new().corners,
-        })
-    }
-
-    /// Creates a cube from a full edge permutation coordinate (0-12!-1)
-    pub fn from_ep12(ep: u32) -> Self {
-        let mut sums = [0u8; 12];
-        let mut temp = ep;
-        for i in 1..12 {
-            sums[i] = (temp % (i as u32 + 1)) as u8;
-            temp /= i as u32 + 1;
-        }
-
-        let mut available = [0u8, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
-        let mut perm = [0u8; 12];
-        let mut current_len = 12;
-        for i in (1..12).rev() {
-            let index = current_len - 1 - sums[i] as usize;
-            perm[i] = available[index];
-            for k in index..current_len - 1 {
-                available[k] = available[k + 1];
-            }
-            current_len -= 1;
-        }
-        perm[0] = available[0];
-
-        let mut edges: u64 = 0;
-        for i in 0..12 {
-            edges |= (perm[i] as u64) << (i * 5);
-        }
-
-        Self(Cube {
-            edges,
-            corners: Cube::new().corners,
-        })
-    }
-
-    /// Creates a cube from a corner permutation coordinate (0-40319)
-    pub fn from_cp(cp: u16) -> Self {
-        let mut sums = [0u8; 8];
-        let mut temp = cp;
-        for i in 1..8 {
-            sums[i] = (temp % (i as u16 + 1)) as u8;
-            temp /= i as u16 + 1;
-        }
-
-        let mut available = [0u8, 1, 2, 3, 4, 5, 6, 7];
-        let mut perm = [0u8; 8];
-        let mut current_len = 8;
-        for i in (1..8).rev() {
-            let index = current_len - 1 - sums[i] as usize;
-            perm[i] = available[index];
-            for k in index..current_len - 1 {
-                available[k] = available[k + 1];
-            }
-            current_len -= 1;
-        }
-        perm[0] = available[0];
-
-        let mut corners: u64 = 0;
-        for i in 0..8 {
-            corners |= (perm[i] as u64) << (i * 5);
-        }
-
-        Self(Cube {
-            edges: Cube::new().edges,
-            corners,
         })
     }
 
@@ -485,6 +397,39 @@ impl KociembaCube {
         Self(Cube {
             edges,
             corners: Cube::new().corners,
+        })
+    }
+
+    /// Creates a cube from a corner permutation coordinate (0-40319)
+    pub fn from_cp(cp: u16) -> Self {
+        let mut sums = [0u8; 8];
+        let mut temp = cp;
+        for i in 1..8 {
+            sums[i] = (temp % (i as u16 + 1)) as u8;
+            temp /= i as u16 + 1;
+        }
+
+        let mut available = [0u8, 1, 2, 3, 4, 5, 6, 7];
+        let mut perm = [0u8; 8];
+        let mut current_len = 8;
+        for i in (1..8).rev() {
+            let index = current_len - 1 - sums[i] as usize;
+            perm[i] = available[index];
+            for k in index..current_len - 1 {
+                available[k] = available[k + 1];
+            }
+            current_len -= 1;
+        }
+        perm[0] = available[0];
+
+        let mut corners: u64 = 0;
+        for i in 0..8 {
+            corners |= (perm[i] as u64) << (i * 5);
+        }
+
+        Self(Cube {
+            edges: Cube::new().edges,
+            corners,
         })
     }
 
@@ -681,9 +626,8 @@ mod tests {
         let cube = KociembaCube::new();
         assert_eq!(cube.get_eo_coord(), 0);
         assert_eq!(cube.get_ep_coord(), 0);
-        assert_eq!(cube.get_ep_no_uds_coord(), 0);
-        assert_eq!(cube.get_ep_uds_coord(), 0);
-        assert_eq!(cube.get_uds_coord(), 0);
+        assert_eq!(cube.get_uds_perm_coord(), 0);
+        assert_eq!(cube.get_uds_pos_coord(), 0);
         assert_eq!(cube.get_co_coord(), 0);
         assert_eq!(cube.get_cp_coord(), 0);
     }
@@ -727,9 +671,9 @@ mod tests {
     #[test]
     fn test_from_uds_roundtrip() {
         for uds in 0..495 {
-            let cube = KociembaCube::from_uds_ori(uds);
+            let cube = KociembaCube::from_uds_pos(uds);
             assert_eq!(
-                cube.get_uds_coord(),
+                cube.get_uds_pos_coord(),
                 uds,
                 "Failed roundtrip for UDS coordinate: {}",
                 uds
@@ -750,7 +694,7 @@ mod tests {
                     uds
                 );
                 assert_eq!(
-                    cube.get_uds_coord(),
+                    cube.get_uds_pos_coord(),
                     uds,
                     "Failed roundtrip UDS in eo_uds: eo={}, uds={}",
                     eo,
@@ -776,24 +720,11 @@ mod tests {
     #[test]
     fn test_from_ep_no_uds_roundtrip() {
         for ep in 0..40320 {
-            let cube = KociembaCube::from_ep_no_uds(ep as u16);
-            assert_eq!(
-                cube.get_ep_no_uds_coord(),
-                ep as u16,
-                "Failed roundtrip for EP_NO_UDS coordinate: {}",
-                ep
-            );
-        }
-    }
-
-    #[test]
-    fn test_from_ep12_roundtrip() {
-        for ep in (0..479001600).step_by(1003) {
-            let cube = KociembaCube::from_ep12(ep);
+            let cube = KociembaCube::from_ep(ep as u16);
             assert_eq!(
                 cube.get_ep_coord(),
-                ep,
-                "Failed roundtrip for EP coordinate: {}",
+                ep as u16,
+                "Failed roundtrip for EP_NO_UDS coordinate: {}",
                 ep
             );
         }
@@ -804,7 +735,7 @@ mod tests {
         for uds_perm in 0..24 {
             let cube = KociembaCube::from_uds_perm(uds_perm);
             assert_eq!(
-                cube.get_ep_uds_coord(),
+                cube.get_uds_perm_coord(),
                 uds_perm,
                 "Failed roundtrip for UDS perm coordinate: {}",
                 uds_perm
