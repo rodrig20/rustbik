@@ -180,14 +180,19 @@ pub fn solve(cube: &Cube) -> Option<Vec<SingleMove>> {
 }
 
 pub fn solve_max_moves(cube: &Cube, max_moves: usize) -> Option<Vec<SingleMove>> {
-    let mut best: Option<Vec<SingleMove>> = None;
     let mut g1_solver = G1Solver::new(cube, 0);
 
     for g1_limit in 0..=max_moves {
         g1_solver.reset(g1_limit);
 
         for path_indices in &mut g1_solver {
-            let mut solution = Vec::new();
+            // Only consider paths that reached G1 at EXACTLY g1_limit
+            // to avoid re-searching solutions found in previous g1_limit iterations.
+            if path_indices.len() < g1_limit {
+                continue;
+            }
+
+            let mut solution = Vec::with_capacity(max_moves);
             let mut current_cube = cube.clone();
 
             for &mv_idx in &path_indices {
@@ -200,16 +205,15 @@ pub fn solve_max_moves(cube: &Cube, max_moves: usize) -> Option<Vec<SingleMove>>
             if let Some(mut g2_moves) = G2Solver::solve(&current_cube, g2_limit) {
                 solution.append(&mut g2_moves);
                 let optimized = Scramble::from_moves(solution).move_list;
-                let total = optimized.len();
 
-                if total <= max_moves {
-                    best = Some(optimized);
+                if optimized.len() <= max_moves {
+                    return Some(optimized);
                 }
             }
         }
     }
 
-    best
+    None
 }
 
 pub fn solve_time_limit(cube: &Cube, time_limit: Duration) -> Option<Vec<SingleMove>> {

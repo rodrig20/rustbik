@@ -20,21 +20,50 @@ where
     let file = File::create(path)?;
     let mut writer = BufWriter::new(file);
 
-    writer.write_all(bytemuck::cast_slice(data))?;
+    let bytes = bytemuck::cast_slice(data);
 
+    writer.write_all(bytes)?;
     writer.flush()?;
     Ok(())
 }
 
 /// Memory-maps a file and returns a static reference to the data
-pub(crate) fn map_file<T: bytemuck::Pod>(path: String) -> &'static [T] {
-    let file = File::open(path).expect("Failed to open file");
+pub fn map_file<T: Pod + Zeroable>(path: String) -> &'static [T] {
+    let file = File::open(&path).expect("Failed to open file");
+
     let mmap = unsafe { Mmap::map(&file).expect("Failed to map file") };
 
-    let mmap_ref: &'static Mmap = Box::leak(Box::new(mmap));
+    // Se a arquitetura for little-endian, podemos fazer zero-copy
+    #[cfg(target_endian = "little")]
+    {
+        let mmap = Box::leak(Box::new(mmap));
+        return bytemuck::cast_slice(mmap);
+    }
 
-    bytemuck::cast_slice(mmap_ref)
+    // Big-endian fallback: temos de converter
+    #[cfg(target_endian = "big")]
+    {
+        use std::mem;
+
+        let size = mem::size_of::<T>();
+        assert!(bytes.len() % size == 0);
+
+        let mut vec = Vec::with_capacity(bytes.len() / size);
+
+        for chunk in bytes.chunks_exact(size) {
+            let mut arr = [0u8; 8]; // suficiente para u64 máximo comum em tabelas
+            arr[..size].copy_from_slice(chunk);
+
+            // Aqui tens de adaptar consoante T (ex: u16/u32/u64)
+            // Exemplo simples para u16:
+            let value = u16::from_le_bytes([chunk[0], chunk[1]]);
+            vec.push(bytemuck::from_bytes::<T>(&value.to_le_bytes()).clone());
+        }
+
+        return Box::leak(vec.into_boxed_slice());
+    }
 }
+
 /// Checks if all necessary lookup tables for Kociemba's algorithm exist
 fn check_g1_tables() -> bool {
     Path::new(&format!("{}/eo_co_uds_table.bin", TABLE_DIR)).exists()
@@ -209,7 +238,7 @@ fn gen_g1_sym_tables() -> std::io::Result<()> {
                         (id << 4) | canon_sym as u32;
                 } else {
                     raw_to_compact_eo_uds.insert(canon_coords, next_id);
-                    id_to_example_eo_uds[next_id as usize] = (eo, uds);
+                    id_to_example_eo_uds[next_id as usize] = canon_coords;
 
                     eo_uds_sym_map[(eo as usize) * 495 + uds as usize] =
                         (next_id << 4) | canon_sym as u32;

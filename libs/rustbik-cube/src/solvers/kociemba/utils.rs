@@ -162,7 +162,7 @@ impl KociembaCube {
         let mut multiplier = 1;
 
         // 8th corner orientation is determined by the sum of orientations modulo 3
-        for i in 0..7 {
+        for i in (0..7).rev() {
             // Extract orientation (bits 3-4) and calculate base-3 representation
             let ori = (self.corners() >> (i * 5 + 3)) & 0b11;
             coord += ori as u16 * multiplier;
@@ -214,17 +214,29 @@ impl KociembaCube {
 
     /// Creates a cube from a corner orientation coordinate (0-2186)
     pub fn from_co(co: u16) -> Self {
+        const CORNER_MASK: u8 = 0b01011010;
         let mut corners: u64 = 0;
         let mut temp_co = co;
         let mut sum_ori = 0;
 
         // Reconstruct corner orientations for the first 7 corners
-        for i in 0..7 {
+        for i in (0..7).rev() {
             let ori = (temp_co % 3) as u8;
             temp_co /= 3;
-            sum_ori += ori;
+
+            let real_ori = if (CORNER_MASK >> i) & 1 == 1 {
+                match ori {
+                    1 => 2,   
+                    2 => 1,   
+                    _ => ori 
+                }
+            } else {
+                ori
+            };
+            sum_ori += real_ori;
             corners |= ((ori as u64) << 3 | (i as u64)) << (i * 5);
         }
+
         // The 8th corner orientation ensures the sum of all orientations is a multiple of 3
         let last_ori = (3 - (sum_ori % 3)) % 3;
         corners |= ((last_ori as u64) << 3 | 7) << (7 * 5);
@@ -235,7 +247,7 @@ impl KociembaCube {
     }
 
     /// Creates a cube from a UDS slice combination coordinate (0-494)
-    pub fn from_uds(uds: u16) -> Self {
+    pub fn from_uds_ori(uds: u16) -> Self {
         let mut occupied = [false; 12];
         let mut s = uds;
         let mut k = 4;
