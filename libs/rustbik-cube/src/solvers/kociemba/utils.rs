@@ -334,6 +334,148 @@ impl KociembaCube {
         Self(cube)
     }
 
+    /// Creates a cube from a permutation coordinate of the 8 non-slice edges (0-40319)
+    pub fn from_ep_no_uds(ep: u16) -> Self {
+        let mut sums = [0u8; 8];
+        let mut temp = ep;
+        for i in 1..8 {
+            sums[i] = (temp % (i as u16 + 1)) as u8;
+            temp /= i as u16 + 1;
+        }
+
+        let mut available = [0u8, 1, 2, 3, 4, 5, 6, 7];
+        let mut perm = [0u8; 8];
+        let mut current_len = 8;
+        for i in (1..8).rev() {
+            let index = current_len - 1 - sums[i] as usize;
+            perm[i] = available[index];
+            for k in index..current_len - 1 {
+                available[k] = available[k + 1];
+            }
+            current_len -= 1;
+        }
+        perm[0] = available[0];
+
+        let mut edges: u64 = 0;
+        // Place the 8 permuted edges in the first 8 slots
+        for i in 0..8 {
+            edges |= (perm[i] as u64) << (i * 5);
+        }
+        // Place the 4 slice edges in the last 4 slots in their canonical positions
+        for i in 8..12 {
+            edges |= (i as u64) << (i * 5);
+        }
+
+        Self(Cube {
+            edges,
+            corners: Cube::new().corners,
+        })
+    }
+
+    /// Creates a cube from a full edge permutation coordinate (0-12!-1)
+    pub fn from_ep12(ep: u32) -> Self {
+        let mut sums = [0u8; 12];
+        let mut temp = ep;
+        for i in 1..12 {
+            sums[i] = (temp % (i as u32 + 1)) as u8;
+            temp /= i as u32 + 1;
+        }
+
+        let mut available = [0u8, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+        let mut perm = [0u8; 12];
+        let mut current_len = 12;
+        for i in (1..12).rev() {
+            let index = current_len - 1 - sums[i] as usize;
+            perm[i] = available[index];
+            for k in index..current_len - 1 {
+                available[k] = available[k + 1];
+            }
+            current_len -= 1;
+        }
+        perm[0] = available[0];
+
+        let mut edges: u64 = 0;
+        for i in 0..12 {
+            edges |= (perm[i] as u64) << (i * 5);
+        }
+
+        Self(Cube {
+            edges,
+            corners: Cube::new().corners,
+        })
+    }
+
+    /// Creates a cube from a corner permutation coordinate (0-40319)
+    pub fn from_cp(cp: u16) -> Self {
+        let mut sums = [0u8; 8];
+        let mut temp = cp;
+        for i in 1..8 {
+            sums[i] = (temp % (i as u16 + 1)) as u8;
+            temp /= i as u16 + 1;
+        }
+
+        let mut available = [0u8, 1, 2, 3, 4, 5, 6, 7];
+        let mut perm = [0u8; 8];
+        let mut current_len = 8;
+        for i in (1..8).rev() {
+            let index = current_len - 1 - sums[i] as usize;
+            perm[i] = available[index];
+            for k in index..current_len - 1 {
+                available[k] = available[k + 1];
+            }
+            current_len -= 1;
+        }
+        perm[0] = available[0];
+
+        let mut corners: u64 = 0;
+        for i in 0..8 {
+            corners |= (perm[i] as u64) << (i * 5);
+        }
+
+        Self(Cube {
+            edges: Cube::new().edges,
+            corners,
+        })
+    }
+
+    /// Creates a cube from a permutation coordinate of the 4 slice edges (0-23)
+    pub fn from_uds_perm(uds_perm: u16) -> Self {
+        let mut sums = [0u8; 4];
+        let mut temp = uds_perm;
+        for i in 1..4 {
+            sums[i] = (temp % (i as u16 + 1)) as u8;
+            temp /= i as u16 + 1;
+        }
+
+        let mut available = [8u8, 9, 10, 11];
+        let mut perm = [0u8; 4];
+        let mut current_len = 4;
+        for i in (1..4).rev() {
+            let index = current_len - 1 - sums[i] as usize;
+            perm[i] = available[index];
+            for k in index..current_len - 1 {
+                available[k] = available[k + 1];
+            }
+            current_len -= 1;
+        }
+        perm[0] = available[0];
+
+        let mut edges: u64 = 0;
+        // Place the 8 non-slice edges in their canonical positions
+        for i in 0..8 {
+            edges |= (i as u64) << (i * 5);
+        }
+        // Place the 4 permuted slice edges in slots 8-11
+        for i in 0..4 {
+            edges |= (perm[i] as u64) << ((i + 8) * 5);
+        }
+
+        Self(Cube {
+            edges,
+            corners: Cube::new().corners,
+        })
+    }
+
     fn rotate_axis(
         &self,
         next_edge_pos: [u64; 12],
@@ -573,7 +715,7 @@ mod tests {
     #[test]
     fn test_from_uds_roundtrip() {
         for uds in 0..495 {
-            let cube = KociembaCube::from_uds(uds);
+            let cube = KociembaCube::from_uds_ori(uds);
             assert_eq!(
                 cube.get_uds_coord(),
                 uds,
@@ -603,6 +745,58 @@ mod tests {
                     uds
                 );
             }
+        }
+    }
+
+    #[test]
+    fn test_from_cp_roundtrip() {
+        for cp in 0..40320 {
+            let cube = KociembaCube::from_cp(cp);
+            assert_eq!(
+                cube.get_cp_coord(),
+                cp,
+                "Failed roundtrip for CP coordinate: {}",
+                cp
+            );
+        }
+    }
+
+    #[test]
+    fn test_from_ep_no_uds_roundtrip() {
+        for ep in 0..40320 {
+            let cube = KociembaCube::from_ep_no_uds(ep as u16);
+            assert_eq!(
+                cube.get_ep_no_uds_coord(),
+                ep as u16,
+                "Failed roundtrip for EP_NO_UDS coordinate: {}",
+                ep
+            );
+        }
+    }
+
+    #[test]
+    fn test_from_ep12_roundtrip() {
+        for ep in (0..479001600).step_by(1003) {
+            let cube = KociembaCube::from_ep12(ep);
+            assert_eq!(
+                cube.get_ep_coord(),
+                ep,
+                "Failed roundtrip for EP coordinate: {}",
+                ep
+            );
+        }
+    }
+
+    #[test]
+    fn test_from_uds_perm_roundtrip() {
+        for uds_perm in 0..24 {
+            let cube = KociembaCube::from_uds_perm(uds_perm);
+            assert_eq!(
+                cube.get_ep_uds_coord(),
+                uds_perm,
+                "Failed roundtrip for UDS perm coordinate: {}",
+                uds_perm
+            );
         }
     }
 }

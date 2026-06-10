@@ -1,4 +1,3 @@
-use bytemuck::cast_slice;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use std::{fs, usize};
@@ -19,57 +18,57 @@ struct G2Frame {
 struct G2Solver;
 
 impl G2Solver {
-    fn ep_table() -> &'static [u8] {
+    fn cp_sym_map() -> &'static [u16] {
+        static DATA: OnceLock<&'static [u16]> = OnceLock::new();
+        *DATA.get_or_init(|| super::map_file(format!("{}/cp_sym_map.bin", TABLE_DIR)))
+    }
+    fn ep_sym_map() -> &'static [u16] {
+        static DATA: OnceLock<&'static [u16]> = OnceLock::new();
+        *DATA.get_or_init(|| super::map_file(format!("{}/ep_sym_map.bin", TABLE_DIR)))
+    }
+
+    fn cp_ep_table() -> &'static [u8] {
         static DATA: OnceLock<&'static [u8]> = OnceLock::new();
-        *DATA.get_or_init(|| super::map_file(format!("{}/ep_table.bin", TABLE_DIR)))
+        *DATA.get_or_init(|| super::map_file(format!("{}/cp_ep_table.bin", TABLE_DIR)))
     }
 
-    fn cp_uds_table() -> &'static [u8] {
-         static DATA: OnceLock<&'static [u8]> = OnceLock::new();
-        *DATA.get_or_init(|| super::map_file(format!("{}/cp_uds_table.bin", TABLE_DIR)))
+    fn cp_move() -> &'static [u16] {
+        static DATA: OnceLock<&'static [u16]> = OnceLock::new();
+        *DATA.get_or_init(|| super::map_file(format!("{}/cp_move.bin", TABLE_DIR)))
     }
 
-    fn cp_move() -> &'static [[u16; 10]] {
-        static DATA: OnceLock<Vec<u8>> = OnceLock::new();
-        let raw = DATA.get_or_init(|| {
-            fs::read(format!("{}/cp_move.bin", TABLE_DIR)).expect("Failed to read cp_move.bin")
-        });
-        cast_slice(raw)
+    fn ep_no_uds_move() -> &'static [u16] {
+        static DATA: OnceLock<&'static [u16]> = OnceLock::new();
+        *DATA.get_or_init(|| super::map_file(format!("{}/ep_move.bin", TABLE_DIR)))
     }
 
-    fn ep_no_uds_move() -> &'static [[u16; 10]] {
-        static DATA: OnceLock<Vec<u8>> = OnceLock::new();
-        let raw = DATA.get_or_init(|| {
-            fs::read(format!("{}/ep_no_uds_move.bin", TABLE_DIR))
-                .expect("Failed to read ep_no_uds_move.bin")
-        });
-        cast_slice(raw)
+    fn slice_move() -> &'static [u8] {
+        static DATA: OnceLock<&'static [u8]> = OnceLock::new();
+        *DATA.get_or_init(|| super::map_file(format!("{}/slice_move.bin", TABLE_DIR)))
     }
 
-    fn ep_uds_move() -> &'static [[u16; 10]] {
-        static DATA: OnceLock<Vec<u8>> = OnceLock::new();
-        let raw = DATA.get_or_init(|| {
-            fs::read(format!("{}/ep_uds_move.bin", TABLE_DIR))
-                .expect("Failed to read ep_uds_move.bin")
-        });
-        cast_slice(raw)
+    #[inline(always)]
+    fn get_h(cp: usize, ep: usize) -> u8 {
+        let packed = Self::cp_sym_map()[cp];
+        let class_id = packed >> 4;
+        let sym = (packed & 0xF) as usize;
+        let ep_conj = Self::ep_sym_map()[(ep * 16) + sym];
+        Self::cp_ep_table()[(class_id as usize * 40320) + ep_conj as usize]
     }
 
     pub fn solve(cube: &Cube, max_limit: usize) -> Option<Vec<SingleMove>> {
         let kcube = KociembaCube(*cube);
-        let (cp0, enu0, eu0) = (
+        let (cp0, ep_no_uds0, ep_uds0) = (
             kcube.get_cp_coord() as usize,
             kcube.get_ep_no_uds_coord() as usize,
             kcube.get_ep_uds_coord() as usize,
         );
 
-        let h0 = *[
-            Self::cp_uds_table()[(eu0 * 40320) + cp0],
-            Self::ep_table()[(eu0 * 40320) + enu0],
-        ]
-        .iter()
-        .max()
-        .unwrap() as usize;
+        let h0 = Self::get_h(cp0, ep_no_uds0) as usize;
+
+        if h0 == 0 && ep_uds0 == 0 {
+            return Some(vec![]);
+        }
 
         if h0 > max_limit {
             return None;
@@ -79,7 +78,7 @@ impl G2Solver {
         for limit in h0..=max_limit {
             stack.clear();
             stack.push(G2Frame {
-                state: (cp0, enu0, eu0),
+                state: (cp0, ep_no_uds0, ep_uds0),
                 move_idx: 0,
                 depth: 0,
                 last_axis: None,
@@ -98,16 +97,10 @@ impl G2Solver {
                     last_last_axis = frame.last_last_axis;
                 }
 
-                let h = *[
-                    Self::cp_uds_table()[(ep_uds * 40320) + cp],
-                    Self::ep_table()[(ep_uds * 40320) + ep_no_uds],
-                ]
-                .iter()
-                .max()
-                .unwrap() as usize;
+                let h = Self::get_h(cp, ep_no_uds) as usize;
 
                 // Goal reached
-                if h == 0 && move_idx == 0 {
+                if h == 0 && ep_uds == 0 {
                     return Some(
                         stack
                             .iter()
@@ -143,9 +136,9 @@ impl G2Solver {
                 }
 
                 let next_state = (
-                    Self::cp_move()[cp][current_move_idx] as usize,
-                    Self::ep_no_uds_move()[ep_no_uds][current_move_idx] as usize,
-                    Self::ep_uds_move()[ep_uds][current_move_idx] as usize,
+                    Self::cp_move()[(cp * 10) + current_move_idx] as usize,
+                    Self::ep_no_uds_move()[(ep_no_uds * 10) + current_move_idx] as usize,
+                    Self::slice_move()[(ep_uds * 10) + current_move_idx] as usize,
                 );
 
                 stack.push(G2Frame {

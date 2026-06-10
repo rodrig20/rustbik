@@ -45,11 +45,12 @@ fn check_g1_tables() -> bool {
 
 /// Checks if all necessary G2 lookup tables exist
 fn check_g2_tables() -> bool {
-    Path::new(&format!("{}/ep_table.bin", TABLE_DIR)).exists()
-        && Path::new(&format!("{}/cp_uds_table.bin", TABLE_DIR)).exists()
+    Path::new(&format!("{}/cp_ep_table.bin", TABLE_DIR)).exists()
         && Path::new(&format!("{}/cp_move.bin", TABLE_DIR)).exists()
-        && Path::new(&format!("{}/ep_no_uds_move.bin", TABLE_DIR)).exists()
-        && Path::new(&format!("{}/ep_uds_move.bin", TABLE_DIR)).exists()
+        && Path::new(&format!("{}/ep_move.bin", TABLE_DIR)).exists()
+        && Path::new(&format!("{}/slice_move.bin", TABLE_DIR)).exists()
+        && Path::new(&format!("{}/ep_sym_map.bin", TABLE_DIR)).exists()
+        && Path::new(&format!("{}/cp_sym_map.bin", TABLE_DIR)).exists()
 }
 
 /// Generates Phase 1 (G0 to G1) lookup tables.
@@ -87,7 +88,7 @@ fn gen_g1_tables() -> std::io::Result<()> {
     }
 
     for uds in 0..495 {
-        let cube = KociembaCube::from_uds(uds as u16);
+        let cube = KociembaCube::from_uds_ori(uds as u16);
         for (m, mv) in MOVE_LIST.iter().enumerate() {
             let mut next = cube.clone();
             next.turn(mv); // Apply rotation
@@ -258,75 +259,175 @@ fn gen_g2_tables() -> std::io::Result<()> {
     if !Path::new(TABLE_DIR).exists() {
         fs::create_dir_all(TABLE_DIR)?;
     }
+    // Precompute transition move tables for CP, EO, and Slice coordinates
+    // These tables allow the solver to quickly determine the next state for any of the 10 moves.
+    let mut cp_move = [0u16; 40320 * 10];
+    for cp in 0..40320 {
+        let cube = KociembaCube::from_cp(cp as u16);
+        for (m, mv) in G1_MOVE_LIST.iter().enumerate() {
+            let mut next = cube.clone();
+            next.turn(mv);
+            cp_move[(cp as usize * 10) + m] = next.get_cp_coord();
+        }
+    }
 
-    // Distances for CP (Corner Permutation) and EP (Edge Permutation)
-    let mut ep_dists = [255u8; 40320 * 24];
-    let mut cp_uds_dists = [255u8; 40320 * 24];
+    let mut ep_move = [0u16; 40320 * 10];
+    for ep in 0..40320 {
+        let cube = KociembaCube::from_ep_no_uds(ep as u16);
+        for (m, mv) in G1_MOVE_LIST.iter().enumerate() {
+            let mut next = cube.clone();
+            next.turn(mv);
+            ep_move[(ep as usize * 10) + m] = next.get_ep_no_uds_coord();
+        }
+    }
 
-    // Move tables for phase 2 coordinates
-    let mut cp_move = [[0u16; 10]; 40320];
-    let mut ep_no_uds_move = [[0u16; 10]; 40320];
-    let mut ep_uds_move = [[0u16; 10]; 24];
+    let mut slice_move = [0u8; 24 * 10];
+    for slice in 0..24 {
+        let cube = KociembaCube::from_uds_perm(slice as u16);
+        for (m, mv) in G1_MOVE_LIST.iter().enumerate() {
+            let mut next = cube.clone();
+            next.turn(mv);
+            slice_move[(slice as usize * 10) + m] = next.get_ep_uds_coord() as u8;
+        }
+    }
+    write_table(&cp_move, format!("{}/cp_move.bin", TABLE_DIR))?;
+    write_table(&ep_move, format!("{}/ep_move.bin", TABLE_DIR))?;
+    write_table(&slice_move, format!("{}/slice_move.bin", TABLE_DIR))?;
 
-    let start_cube = KociembaCube::new();
+    let ep_sym_map: &[u16] = map_file(format!("{}/ep_sym_map.bin", TABLE_DIR));
+    let cp_sym_move: &[u16] = map_file(format!("{}/cp_sym_move.bin", TABLE_DIR));
 
-    ep_dists[0] = 0;
-    cp_uds_dists[0] = 0;
+    // Pruning table with 2768 canonical corner classes crossed with 40320 edge states
+    let mut pruning_table: Box<[u8]> = vec![255u8; 2768 * 40320].into_boxed_slice();
+    pruning_table[0] = 0; // The solved state
 
-    let mut queue: VecDeque<(KociembaCube, usize, usize, usize)> = VecDeque::new();
-    queue.push_back((start_cube, 0, 0, 0));
+    // Stores the current corner symmetry class (CP) and raw edge coordinates (EP)
+    let mut queue = VecDeque::from([(0u16, 0u16)]);
 
-    while let Some((current, d_ep_no_uds, d_ep_uds, d_cp)) = queue.pop_front() {
-        // Try only the 10 allowed G1 moves
-        for (i, mv) in G1_MOVE_LIST.iter().enumerate() {
-            let mut next = current.clone();
-            next.turn(&mv);
+    // Explore the state space with BFS layer-by-layer to find shortest paths
+    while let Some((curr_class, curr_ep)) = queue.pop_front() {
+        let curr_class_offset = curr_class as usize * 10;
+        let curr_ep_offset = curr_ep as usize * 10;
 
-            let n_ep_no_uds = next.get_ep_no_uds_coord() as usize;
-            let n_ep_uds = next.get_ep_uds_coord() as usize;
-            let n_cp = next.get_cp_coord() as usize;
+        let curr_idx = (curr_class as usize * 40320) + curr_ep as usize;
+        let curr_dist = pruning_table[curr_idx];
 
-            // Fill phase 2 move tables
-            cp_move[d_cp][i] = n_cp as u16;
-            ep_no_uds_move[d_ep_no_uds][i] = n_ep_no_uds as u16;
-            ep_uds_move[d_ep_uds][i] = n_ep_uds as u16;
+        // Phase 2 is restricted to 10 allowed moves
+        for i in 0..10 {
+            // Determine the next corner class and symmetry transformation
+            let packed_move = cp_sym_move[curr_class_offset + i];
+            let next_class = packed_move >> 4;
+            let sym = (packed_move & 0xF) as usize;
 
-            let mut discovered = false;
-            if ep_dists[(n_ep_uds * 40320) + n_ep_no_uds] == 255 {
-                ep_dists[(n_ep_uds * 40320) + n_ep_no_uds] =
-                    ep_dists[(d_ep_uds * 40320) + d_ep_no_uds] + 1;
-                discovered = true;
-            }
-            if cp_uds_dists[(n_ep_uds * 40320) + n_cp] == 255 {
-                cp_uds_dists[(n_ep_uds * 40320) + n_cp] =
-                    cp_uds_dists[(d_ep_uds * 40320) + d_cp] + 1;
-                discovered = true;
-            }
+            // Apply move to edges and align perspective with the new symmetry
+            let raw_next_ep = ep_move[curr_ep_offset + i] as usize;
+            let next_ep = ep_sym_map[raw_next_ep * 16 + sym];
 
-            if discovered {
-                queue.push_back((next, n_ep_no_uds, n_ep_uds, n_cp));
+            let next_idx = (next_class as usize * 40320) + next_ep as usize;
+
+            // Mark unvisited states and queue for further exploration
+            if pruning_table[next_idx] == 255 {
+                pruning_table[next_idx] = curr_dist + 1;
+                queue.push_back((next_class, next_ep));
             }
         }
     }
 
-    // Save phase 2 pruning tables
-    write_table(&ep_dists, format!("{}/ep_table.bin", TABLE_DIR))?;
-    write_table(&cp_uds_dists, format!("{}/cp_uds_table.bin", TABLE_DIR))?;
-
-    // Save phase 2 move tables
-    write_table(&cp_move, format!("{}/cp_move.bin", TABLE_DIR))?;
-    write_table(&ep_no_uds_move, format!("{}/ep_no_uds_move.bin", TABLE_DIR))?;
-    write_table(&ep_uds_move, format!("{}/ep_uds_move.bin", TABLE_DIR))?;
+    // Save to disk
+    write_table(&pruning_table, format!("{}/cp_ep_table.bin", TABLE_DIR))?;
 
     Ok(())
 }
 
+fn gen_g2_sym_tables() -> std::io::Result<()> {
+    if !Path::new(TABLE_DIR).exists() {
+        fs::create_dir_all(TABLE_DIR)?;
+    }
+
+    // Generate symmetry conjugation table for Edges (EP)
+    // Maps how each of the 40320 EP states transforms under the 16 symmetries
+    {
+        let mut ep_sym_map = vec![0u16; 40320 * 16];
+        for ep in 0..40320 {
+            let cube = KociembaCube::from_ep_no_uds(ep as u16);
+            for sym in 0..16 {
+                let sym_cube = cube.apply_uds_symmetry(sym as u8);
+                ep_sym_map[(ep as usize * 16) + sym] = sym_cube.get_ep_no_uds_coord();
+            }
+        }
+        write_table(&ep_sym_map, format!("{}/ep_sym_map.bin", TABLE_DIR))?;
+    }
+
+    // Generate symmetry mapping for Corners (CP) and the canonical move table
+    {
+        let mut cp_sym_map = [0u16; 40320];
+        let mut raw_to_compact_cp: HashMap<u16, u16> = HashMap::new();
+        let mut id_to_example_cp = [0u16; 2768];
+
+        let mut next_id: u16 = 0;
+
+        // Reduce 40320 CP states to 2768 canonical classes using 16 symmetries
+        for cp in 0..40320 {
+            let cube = KociembaCube::from_cp(cp as u16);
+
+            let mut canon_cp = cube.get_cp_coord();
+            let mut canon_sym = 0;
+
+            // Find the lexicographically smallest CP among the 16 symmetries
+            for i in 1..16 {
+                let sym_cube = cube.apply_uds_symmetry(i);
+                let sym_cp = sym_cube.get_cp_coord();
+
+                if sym_cp < canon_cp {
+                    canon_cp = sym_cp;
+                    canon_sym = i;
+                }
+            }
+
+            if let Some(id) = raw_to_compact_cp.get(&canon_cp) {
+                cp_sym_map[cp as usize] = (id << 4) | canon_sym as u16;
+            } else {
+                raw_to_compact_cp.insert(canon_cp, next_id);
+                id_to_example_cp[next_id as usize] = cp as u16;
+
+                cp_sym_map[cp as usize] = (next_id << 4) | canon_sym as u16;
+                next_id += 1;
+            }
+        }
+
+        write_table(&cp_sym_map, format!("{}/cp_sym_map.bin", TABLE_DIR))?;
+
+        // Precompute move transitions in the reduced space (2768 classes * 10 moves)
+        // Stores both the next class (MSB) and the symmetry transformation (4 LSB)
+        let mut cp_sym_move = vec![0u16; 2768 * 10];
+
+        for (canon_id, &cp) in id_to_example_cp.iter().enumerate() {
+            let cube = KociembaCube::from_cp(cp);
+
+            for (m, mv) in G1_MOVE_LIST.iter().enumerate() {
+                let mut n_cube = cube.clone();
+                n_cube.turn(mv);
+
+                let n_cp = n_cube.get_cp_coord() as usize;
+                let n_canon = cp_sym_map[n_cp];
+
+                cp_sym_move[canon_id * 10 + m] = n_canon;
+            }
+        }
+
+        write_table(&cp_sym_move, format!("{}/cp_sym_move.bin", TABLE_DIR))?;
+    }
+
+    Ok(())
+}
 /// Ensures all Kociemba lookup tables are present, generating them if necessary
 pub fn gen_tables() -> std::io::Result<()> {
     gen_g1_sym_tables()?;
     if !check_g1_tables() {
         gen_g1_tables()?;
     }
+
+    gen_g2_sym_tables()?;
     if !check_g2_tables() {
         gen_g2_tables()?;
     }
